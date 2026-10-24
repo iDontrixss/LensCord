@@ -1,0 +1,26 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <SolidColorBrush x:Key="Fondo"          Color="#ECECEF" />
+  <SolidColorBrush x:Key="Marco"          Color="#FBFBFB" />
+  <SolidColorBrush x:Key="Lienzo"         Color="#F7F7F8" />
+  <SolidColorBrush x:Key="Tarjeta"        Color="#F1F1F2" />
+  <SolidColorBrush x:Key="TarjetaHover"   Color="#EAEAEC" />
+  <SolidColorBrush x:Key="PastelGris"     Color="#E8E8EA" />
+  <SolidColorBrush x:Key="PastelLavanda"  Color="#E3E5FA" />
+  <SolidColorBrush x:Key="PastelMenta"    Color="#DDF3E8" />
+  <SolidColorBrush x:Key="Rosa"           Color="#F24D9D" />
+  <SolidColorBrush x:Key="RosaFondo"      Color="#FCE7F3" />
+  <SolidColorBrush x:Key="Insignia"       Color="#DADCF7" />
+  <SolidColorBrush x:Key="Tinta"          Color="#111111" />
+  <SolidColorBrush x:Key="TintaSuave"     Color="#5C5C63" />
+  <SolidColorBrush x:Key="TintaTenue"     Color="#8E8E96" />
+  <SolidColorBrush x:Key="Indigo"         Color="#4C5BD4" />
+  <SolidColorBrush x:Key="Verde"          Color="#1E9E63" />
+  <SolidColorBrush x:Key="Linea"          Color="#E5E5E9" />
+  <SolidColorBrush x:Key="PuntoNegro"     Color="#1A1A1F" />
+  <SolidColorBrush x:Key="PuntoVioleta"   Color="#6A5AE0" />
+  <SolidColorBrush x:Key="PuntoRosa"      Color="#F0489B" />
+
+  <x:Double x:Key="RadioTarjeta">20</x:Double>
+  <x:Double x:Key="RadioChip">999</x:Double>
+</ResourceDictionary>

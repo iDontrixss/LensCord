@@ -1,0 +1,16 @@
+# Paquetes pesados y no redistribuibles (SDK .NET local, platform-tools Android)
+tools/
+
+# Evidencia y logs locales (contienen datos privados: serials, IPs de red)
+evidencia/
+
+# Salidas de build
+bin/
+obj/
+*.pdb
+*.dex
+dispositivo/build/
+virtualcam/payload/
+
+# Dependencias grandes de terceros (DirectN ~21 MB): descargar por separado
+virtualcam/Source/External/

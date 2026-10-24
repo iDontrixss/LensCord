@@ -1,0 +1,370 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controles="clr-namespace:Lenscord.Controls"
+        x:Class="Lenscord.Views.MainWindow"
+        Title="Lenscord" Width="1320" Height="900"
+        MinWidth="1040" MinHeight="660"
+        WindowStartupLocation="CenterScreen"
+        Background="#ECECEF"
+        FontFamily="Inter">
+
+  <Border Classes="fondo">
+    <Border Classes="marco">
+      <Grid RowDefinitions="Auto,*,Auto">
+
+        <Grid Grid.Row="0" Margin="26,18,26,8" ColumnDefinitions="Auto,*,Auto">
+          <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+            <Border Classes="marca">
+              <Canvas Width="20" Height="20">
+                <Path Data="M4 1 C2.8 1 2 1.8 2 3 L2 11.6 C2 14.7 4.5 17.3 7.7 17.3 L16.8 17.3 C18 17.3 18.8 16.5 18.8 15.3 C18.8 14.1 18 13.3 16.8 13.3 L8.3 13.3 C6.9 13.3 6.1 12.5 6.1 11.1 L6.1 3 C6.1 1.8 5.3 1 4.1 1 Z"
+                      Fill="#15161A" />
+                <Ellipse Canvas.Left="8" Canvas.Top="5.3" Width="5.4" Height="5.4"
+                         Stroke="#15161A" StrokeThickness="0.65" />
+                <Ellipse Canvas.Left="10.95" Canvas.Top="5.75" Width="1.9" Height="1.9"
+                         Fill="#4D9DF5" Stroke="#15161A" StrokeThickness="0.5" />
+              </Canvas>
+            </Border>
+            <TextBlock Text="Lenscord" FontWeight="SemiBold" FontSize="14" Foreground="#111111"
+                       VerticalAlignment="Center" />
+            <Path Data="M9 5l7 7-7 7" Stroke="#A1A1A8" StrokeThickness="1.5"
+                  Fill="Transparent" StrokeLineCap="Round" StrokeJoin="Round"
+                  Width="12" Height="12" Stretch="Uniform" VerticalAlignment="Center" />
+            <TextBlock Text="Espacio de cámara" FontSize="14" Foreground="#707078"
+                       VerticalAlignment="Center" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+            <Border Classes="insignia" IsVisible="{Binding FueraDeLinea}">
+              <TextBlock Text="SEÑAL SIMULADA" />
+            </Border>
+
+            <Border Classes="estadoConexion">
+              <StackPanel Orientation="Horizontal" Spacing="7">
+                <Ellipse Width="6" Height="6" Fill="#F24D9D" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding TransporteTexto}" FontSize="12" FontWeight="Medium"
+                           Foreground="#A32E69" MaxWidth="210" TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+            </Border>
+
+            <Button Classes="contorno" Click="OnCambiarModo" Padding="14,8"
+                    AutomationProperties.Name="Cambiar entre USB y Wi-Fi">
+              <StackPanel Orientation="Horizontal" Spacing="7">
+                <Path Data="{Binding IconoModo}" Stroke="#111111" StrokeThickness="1.6"
+                      Fill="Transparent" StrokeLineCap="Round" Width="16" Height="16" Stretch="Uniform" />
+                <TextBlock Text="{Binding TextoModo}" />
+              </StackPanel>
+            </Button>
+
+            <Button Classes="pildoraPrincipal" Click="OnIniciar"
+                    IsEnabled="{Binding PuedeIniciar}" IsVisible="{Binding MostrarIniciar}"
+                    AutomationProperties.Name="Iniciar cámara">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Path Data="M8 5l11 7-11 7z" Width="12" Height="12" Stretch="Uniform" />
+                <TextBlock Text="Iniciar cámara" />
+              </StackPanel>
+            </Button>
+
+            <Button Classes="pildoraPrincipal" Click="OnDetener" IsVisible="{Binding MostrarDetener}"
+                    AutomationProperties.Name="Detener cámara">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Border Width="9" Height="9" Background="White" CornerRadius="2" />
+                <TextBlock Text="Detener" />
+              </StackPanel>
+            </Button>
+          </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="22,0,22,0">
+          <Border Classes="barraFlotante" VerticalAlignment="Center" Margin="0,8,0,8">
+            <StackPanel Spacing="4">
+              <Button Classes="icono" Click="OnZoomMas" ToolTip.Tip="Acercar"
+                      AutomationProperties.Name="Acercar zoom">
+                <Path Data="M12 5v14 M5 12h14" StrokeLineCap="Round" />
+              </Button>
+              <Button Classes="icono" Click="OnZoomMenos" ToolTip.Tip="Alejar"
+                      AutomationProperties.Name="Alejar zoom">
+                <Path Data="M5 12h14" StrokeLineCap="Round" />
+              </Button>
+              <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
+              <Button Classes="icono" Click="OnFlash" ToolTip.Tip="Flash"
+                      IsEnabled="{Binding TorchPosible}" AutomationProperties.Name="Activar flash">
+                <Path Data="M13 2 L5 13 h5 l-1 9 l8-11 h-5 z" />
+              </Button>
+              <Button Classes="icono" Click="OnEspejo" ToolTip.Tip="Espejo horizontal"
+                      AutomationProperties.Name="Espejo horizontal">
+                <Path Data="M12 3v18 M3 8l9-4 9 4-9 4z M3 16l9 4 9-4" />
+              </Button>
+              <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
+              <Button Classes="icono" Click="OnPausa" ToolTip.Tip="Pausar o reanudar"
+                      AutomationProperties.Name="Pausar o reanudar">
+                <Path Data="M9 5v14 M15 5v14" StrokeLineCap="Round" />
+              </Button>
+              <Button Classes="icono" Click="OnCamara" ToolTip.Tip="Cambiar de cámara"
+                      AutomationProperties.Name="Cambiar de cámara">
+                <Path Data="M4 8h4l2-3h4l2 3h4v11H4z" />
+              </Button>
+              <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
+              <Button Classes="icono" Click="OnRotar" ToolTip.Tip="Rotar 90 grados"
+                      AutomationProperties.Name="Rotar 90 grados">
+                <Path Data="M20 12a8 8 0 1 1-2.3-5.6 M20 3v5h-5" StrokeLineCap="Round" />
+              </Button>
+              <Button Classes="icono" Click="OnRecorte" ToolTip.Tip="Cambiar recorte"
+                      AutomationProperties.Name="Cambiar recorte">
+                <Path Data="M6 2v16h16 M2 6h16v16" StrokeLineCap="Round" />
+              </Button>
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Column="1" Classes="lienzo">
+            <Panel>
+              <controles:ParticleField x:Name="Particulas" />
+
+              <ScrollViewer x:Name="LienzoScroll" VerticalScrollBarVisibility="Auto"
+                            HorizontalScrollBarVisibility="Disabled"
+                            VerticalContentAlignment="Top" HorizontalContentAlignment="Stretch">
+                <StackPanel MaxWidth="1080" HorizontalAlignment="Center" Margin="44,6,44,24" Spacing="12">
+                  <StackPanel Spacing="7" HorizontalAlignment="Center" Margin="0,8,0,0">
+                    <TextBlock Classes="titular" HorizontalAlignment="Center" Text="{Binding Titular}" />
+                    <TextBlock Classes="subtitular" HorizontalAlignment="Center" MaxWidth="590"
+                               TextAlignment="Center" TextWrapping="Wrap" Text="{Binding Subtitular}" />
+                  </StackPanel>
+
+                  <Border Classes="avisoPeligro" IsVisible="{Binding EsPeligro}"
+                          HorizontalAlignment="Center" MaxWidth="680">
+                    <TextBlock Text="{Binding EstadoAccion}" Foreground="#A32E69" FontSize="12"
+                               TextWrapping="Wrap" TextAlignment="Center" />
+                  </Border>
+
+                  <Viewbox Stretch="Uniform" MaxWidth="720" HorizontalAlignment="Center">
+                    <Border Width="1280" Height="720" CornerRadius="40" ClipToBounds="True">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                          <GradientStop Offset="0" Color="#12141C" />
+                          <GradientStop Offset="0.55" Color="#191C27" />
+                          <GradientStop Offset="1" Color="#0E1016" />
+                        </LinearGradientBrush>
+                      </Border.Background>
+                      <Grid>
+                        <Ellipse Width="150" Height="150" Stroke="#2A2E42" StrokeThickness="1"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Ellipse Width="300" Height="300" Stroke="#202434" StrokeThickness="1"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Path Data="M 0 16 H 32 M 16 0 V 32" Stroke="#34394E" StrokeThickness="1"
+                              Width="32" Height="32" Stretch="None"
+                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Image x:Name="VistaPrevia" Source="{Binding Lienzo}" Stretch="Uniform" />
+                      </Grid>
+                    </Border>
+                  </Viewbox>
+
+                  <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                    <Button Classes="pildora" Click="OnPausa" IsEnabled="{Binding Transmitiendo}"
+                            AutomationProperties.Name="Pausar o reanudar">
+                      <StackPanel Orientation="Horizontal" Spacing="7">
+                        <Path Data="M9 5v14 M15 5v14" Stroke="#111111" StrokeThickness="1.8"
+                              StrokeLineCap="Round" Width="13" Height="13" Stretch="Uniform" />
+                        <TextBlock Text="Pausar" />
+                      </StackPanel>
+                    </Button>
+                    <Button Classes="pildora" Click="OnCamara" IsEnabled="{Binding Transmitiendo}"
+                            AutomationProperties.Name="Cambiar de cámara">
+                      <TextBlock Text="Cambiar cámara" />
+                    </Button>
+                    <Button Classes="pildora" Click="OnRecorte" IsEnabled="{Binding Transmitiendo}"
+                            AutomationProperties.Name="Cambiar recorte">
+                      <TextBlock Text="Recorte" />
+                    </Button>
+                  </StackPanel>
+
+                  <Grid ColumnDefinitions="*,*,*,*,*" ColumnSpacing="12" Margin="0,4,0,0">
+                    <Border Classes="tarjeta" Grid.Column="0">
+                      <StackPanel Spacing="9">
+                        <Border Classes="baldosa" Background="#E8E8EA">
+                          <Path Data="M4 9a12 12 0 0 1 16 0 M7 13a8 8 0 0 1 10 0 M10 17a4 4 0 0 1 4 0"
+                                Stroke="#5C5C63" StrokeThickness="1.6" Fill="Transparent"
+                                StrokeLineCap="Round" Width="21" Height="21" Stretch="Uniform" />
+                        </Border>
+                        <TextBlock Classes="tituloTarjeta" Text="Conexión" />
+                        <TextBlock Classes="descripcionTarjeta" Text="{Binding TransporteTexto}" />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="tarjeta" Grid.Column="1">
+                      <StackPanel Spacing="9">
+                        <Border Classes="baldosa" Background="#E3E5FA">
+                          <Path Data="M4 8h4l2-3h4l2 3h4v11H4z" Stroke="#4C5BD4" StrokeThickness="1.6"
+                                Fill="Transparent" Width="21" Height="21" Stretch="Uniform" />
+                        </Border>
+                        <TextBlock Classes="tituloTarjeta" Text="Lente" />
+                        <TextBlock Classes="descripcionTarjeta" Text="{Binding LenteTexto}" />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="tarjeta" Grid.Column="2">
+                      <StackPanel Spacing="9">
+                        <Border Classes="baldosa" Background="#DDF3E8">
+                          <Path Data="M4 8h4l2-3h4l2 3h4v11H4z M9 13a3 3 0 1 0 6 0a3 3 0 0 0-6 0"
+                                Stroke="#1E9E63" StrokeThickness="1.6" Fill="Transparent"
+                                Width="21" Height="21" Stretch="Uniform" />
+                        </Border>
+                        <TextBlock Classes="tituloTarjeta" Text="Imagen" />
+                        <TextBlock Classes="descripcionTarjeta"
+                                   Text="Espejo, rotación y recorte se aplican a la imagen." />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="tarjeta" Grid.Column="3">
+                      <StackPanel Spacing="9">
+                        <Border Classes="baldosa" Background="#F5E7F0">
+                          <Path Data="M4 7h16v13H4z M8 7l2-3h4l2 3 M9 13a3 3 0 1 0 6 0a3 3 0 0 0-6 0"
+                                Stroke="#B02A70" StrokeThickness="1.6" Fill="Transparent"
+                                Width="21" Height="21" Stretch="Uniform" />
+                        </Border>
+                        <TextBlock Classes="tituloTarjeta" Text="Captura" />
+                        <TextBlock Classes="descripcionTarjeta"
+                                   Text="Pausa y revisa la imagen antes de continuar." />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="tarjeta" Grid.Column="4">
+                      <StackPanel Spacing="9">
+                        <Border Classes="baldosa" Background="#E8E8EA">
+                          <Path Data="M3 12a9 9 0 0 1 18 0 M8 20h8" Stroke="#5C5C63" StrokeThickness="1.6"
+                                Fill="Transparent" StrokeLineCap="Round"
+                                Width="21" Height="21" Stretch="Uniform" />
+                        </Border>
+                        <TextBlock Classes="tituloTarjeta" Text="Salida" />
+                        <TextBlock Classes="descripcionTarjeta"
+                                   Text="Cámara virtual Lenscord para Discord, OBS y apps de Windows." />
+                      </StackPanel>
+                    </Border>
+                  </Grid>
+
+                  <Expander Header="Ajustes de captura" IsExpanded="False"
+                            HorizontalContentAlignment="Stretch">
+                    <Border Classes="tarjeta" Margin="0,8,0,0">
+                      <StackPanel Spacing="12">
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                          <StackPanel Grid.Column="0" Spacing="4">
+                            <TextBlock Classes="etiqueta" Text="Cámara" />
+                            <ComboBox ItemsSource="{Binding Camaras}" SelectedItem="{Binding Camara}"
+                                      HorizontalAlignment="Stretch">
+                              <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                  <TextBlock Text="{Binding Nombre}" />
+                                </DataTemplate>
+                              </ComboBox.ItemTemplate>
+                            </ComboBox>
+                          </StackPanel>
+                          <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Classes="etiqueta" Text="Resolución y cadencia" />
+                            <ComboBox ItemsSource="{Binding Resoluciones}"
+                                      SelectedItem="{Binding ResolucionSeleccionada}"
+                                      SelectionChanged="OnResolucion"
+                                      HorizontalAlignment="Stretch">
+                              <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                  <TextBlock Text="{Binding Texto}" />
+                                </DataTemplate>
+                              </ComboBox.ItemTemplate>
+                            </ComboBox>
+                          </StackPanel>
+                        </Grid>
+                        <TextBlock Classes="descripcionTarjeta"
+                                   Text="{Binding TipoZoom, StringFormat='Tipo de zoom: {0}'}" />
+                      </StackPanel>
+                    </Border>
+                  </Expander>
+
+                  <Expander Header="Conexión Wi-Fi" IsExpanded="False"
+                            IsVisible="{Binding MostrarPanelWifi}" HorizontalContentAlignment="Stretch">
+                    <Border Classes="tarjeta" Margin="0,8,0,0">
+                      <StackPanel Spacing="12">
+                        <TextBlock Classes="descripcionTarjeta"
+                                   Text="Activa Depuración inalámbrica y usa Detectar Wi-Fi. El puerto de conexión cambia en cada sesión; el de emparejamiento no es el mismo." />
+                        <Grid ColumnDefinitions="2*,*,*" ColumnSpacing="10">
+                          <StackPanel Grid.Column="0" Spacing="4">
+                            <TextBlock Classes="etiqueta" Text="IP del celular" />
+                            <TextBox Text="{Binding WifiIp}" Watermark="192.168.1.50" />
+                          </StackPanel>
+                          <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Classes="etiqueta" Text="Puerto de emparejamiento" />
+                            <TextBox Text="{Binding WifiPuerto}" Watermark="37123" />
+                          </StackPanel>
+                          <StackPanel Grid.Column="2" Spacing="4">
+                            <TextBlock Classes="etiqueta" Text="Código de 6 dígitos" />
+                            <TextBox Text="{Binding WifiCodigo}" Watermark="123456" MaxLength="6" />
+                          </StackPanel>
+                        </Grid>
+                        <WrapPanel Orientation="Horizontal">
+                          <Button Classes="pildora" Click="OnDetectarWifi" Margin="0,0,8,8">
+                            <TextBlock Text="Detectar Wi-Fi" />
+                          </Button>
+                          <Button Classes="pildora" Click="OnEmparejar" Margin="0,0,8,8">
+                            <TextBlock Text="Emparejar" />
+                          </Button>
+                          <Button Classes="pildora" Click="OnConectarWifi" Margin="0,0,8,8">
+                            <TextBlock Text="Conectar" />
+                          </Button>
+                          <Button Classes="pildora" Click="OnActivarWifi" Margin="0,0,8,8">
+                            <TextBlock Text="Activar por USB" />
+                          </Button>
+                          <Button Classes="pildora" Click="OnVolverUsb" Margin="0,0,8,8">
+                            <TextBlock Text="Volver a USB" />
+                          </Button>
+                        </WrapPanel>
+                        <TextBlock Classes="descripcionTarjeta" Text="{Binding WifiEstado}" />
+                        <Border Background="#FFF4E6" CornerRadius="14" Padding="12">
+                          <TextBlock Foreground="#8A5B12" FontSize="12" TextWrapping="Wrap"
+                                     Text="ADB por Wi-Fi deja el celular accesible desde la red. Vuelve a USB al terminar. La pantalla se mantiene encendida durante la sesión." />
+                        </Border>
+                      </StackPanel>
+                    </Border>
+                  </Expander>
+
+                  <Expander Header="Registro" IsExpanded="False" HorizontalContentAlignment="Stretch">
+                    <Border Background="#151517" CornerRadius="18" Padding="14" Margin="0,8,0,0">
+                      <ScrollViewer Height="150" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Registro}">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                              <TextBlock Text="{Binding}" FontFamily="Cascadia Mono, Consolas, monospace"
+                                         FontSize="11" Foreground="#CFCFD6" TextWrapping="Wrap" />
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </ScrollViewer>
+                    </Border>
+                  </Expander>
+                </StackPanel>
+              </ScrollViewer>
+            </Panel>
+          </Border>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="26,8,26,18" ColumnDefinitions="*,Auto">
+          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <Border Classes="chip">
+              <StackPanel Orientation="Horizontal" Spacing="7">
+                <Ellipse Width="6" Height="6" Fill="#1E9E63" VerticalAlignment="Center" />
+                <TextBlock Classes="chipTexto" Text="{Binding EstadoTexto}" />
+              </StackPanel>
+            </Border>
+            <Border Classes="chip">
+              <TextBlock Classes="chipTexto" Text="{Binding FpsTexto}" />
+            </Border>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <Border Classes="chip">
+              <TextBlock Classes="chipTexto" Text="{Binding Reloj}" />
+            </Border>
+            <Border Classes="chip">
+              <TextBlock Classes="chipTexto" Text="Sesión local" />
+            </Border>
+          </StackPanel>
+        </Grid>
+      </Grid>
+    </Border>
+  </Border>
+</Window>
+
