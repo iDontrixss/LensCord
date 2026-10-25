@@ -52,12 +52,33 @@ function Copy-PayloadFile([string]$Source, [string]$Destination) {
         }
     }
 }
+function Assert-FileReplaceable([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::Open(
+            $Path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None)
+    }
+    catch [System.IO.IOException] {
+        throw "Close Discord and any other app using Lenscord Virtual Camera, then retry. The camera DLL is still loaded: $Path"
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+    }
+}
 
 $resolvedPayload = (Resolve-Path -LiteralPath $PayloadDirectory).Path
 $sourceDll = Join-Path $resolvedPayload $sourceDllName
+$dshowDll = Join-Path $resolvedPayload $dshowDllName
 $controlExe = Join-Path $resolvedPayload $controlExeName
 if (-not (Test-Path -LiteralPath $sourceDll)) { throw "Virtual camera source not found: $sourceDll" }
+if (-not (Test-Path -LiteralPath $dshowDll)) { throw "DirectShow virtual camera not found: $dshowDll" }
 if (-not (Test-Path -LiteralPath $controlExe)) { throw "Virtual camera control app not found: $controlExe" }
+$payloadFiles = @(Get-ChildItem -LiteralPath $resolvedPayload -File |
+    Where-Object { $_.Name -in @($sourceDllName, $dshowDllName, $controlExeName) })
 
 $cameraServiceNames = @("FrameServerMonitor", "FrameServer")
 $cameraServicesToRestart = @($cameraServiceNames | Where-Object {
@@ -92,6 +113,10 @@ function Restart-CameraServices {
 try {
     Stop-CameraServices
 
+    $installedSource = Join-Path $targetDirectory $sourceDllName
+    $installedDShow = Join-Path $targetDirectory $dshowDllName
+    Assert-FileReplaceable $installedDShow
+
     $oldSource = Join-Path $targetDirectory $sourceDllName
     Write-InstallLog "Keeping the persistent virtual-camera registration while replacing its COM source."
     if (Test-Path -LiteralPath $oldSource) {
@@ -100,22 +125,20 @@ try {
     }
 
     New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
-    Get-ChildItem -LiteralPath $resolvedPayload -File | ForEach-Object {
-        Write-InstallLog "Copying $($_.Name)."
-        Copy-PayloadFile $_.FullName (Join-Path $targetDirectory $_.Name)
+    foreach ($payloadFile in $payloadFiles) {
+        Write-InstallLog "Copying $($payloadFile.Name)."
+        Copy-PayloadFile $payloadFile.FullName (Join-Path $targetDirectory $payloadFile.Name)
     }
 
     & icacls.exe $dataDirectory /inheritance:e /grant '*S-1-5-32-545:(OI)(CI)M' '*S-1-5-19:(OI)(CI)R' '*S-1-5-18:(OI)(CI)R' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Failed to set permissions on the shared-frame directory (icacls exit $LASTEXITCODE)." }
     Write-InstallLog "Shared-frame permissions updated."
 
-    $installedSource = Join-Path $targetDirectory $sourceDllName
     & regsvr32.exe /s $installedSource
     if ($LASTEXITCODE -ne 0) { throw "Failed to register the virtual camera COM source (regsvr32 exit $LASTEXITCODE)." }
     Write-InstallLog "COM source registered."
 
     # Filtro DirectShow: es el que Discover y libwebrtc (Discord, etc.) ven.
-    $installedDShow = Join-Path $targetDirectory $dshowDllName
     & regsvr32.exe /s $installedDShow
     if ($LASTEXITCODE -ne 0) { throw "Failed to register the DirectShow virtual camera (regsvr32 exit $LASTEXITCODE)." }
     Write-InstallLog "DirectShow virtual camera registered."

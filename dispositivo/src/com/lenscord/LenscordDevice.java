@@ -26,6 +26,8 @@ import android.view.Surface;
 
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
+import java.io.DataInputStream;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
@@ -34,6 +36,7 @@ import java.lang.reflect.Modifier;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.MessageDigest;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -53,7 +56,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   adb shell CLASSPATH=/data/local/tmp/lenscord.dex \
  *       app_process /data/local/tmp com.lenscord.LenscordDevice <puertoVideo> <puertoControl>
  *
- * El telefono ESCUCHA en 127.0.0.1 y la PC se conecta con "adb forward tcp:X tcp:Y".
+ * USB escucha en loopback y usa adb forward. Wi-Fi escucha en puertos efimeros,
+ * protegidos por token, y la PC conecta directamente por la LAN.
  * Dos flujos:
  *   - video: elementary stream H.264 en Annex-B (start code 00 00 00 01)
  *   - control: una linea JSON por mensaje, en ambos sentidos
@@ -80,7 +84,7 @@ public final class LenscordDevice {
     private static Handler gCamHandler;
 
     private static String gCamId;
-    private static float gZoomFrac = 1.0f;     // 0..1 = fraccion del maximo
+    private static float gZoomFrac = 0.0f;     // 0 = 1x; 1 = maximo
     private static boolean gTorch = false;
     private static boolean gPaused = false;
 
@@ -91,6 +95,8 @@ public final class LenscordDevice {
 
     private static OutputStream gCtrlOut;
     private static BufferedReader gCtrlIn;
+    private static String gBindAddress = "127.0.0.1";
+    private static String gAccessToken = "";
 
     private LenscordDevice() { }
 
@@ -104,6 +110,16 @@ public static void main(String[] args) {
             if (args.length > 0 && args[0].equals("--open")) { abrirCamara(); return; }
             int vp = args.length > 0 ? Integer.parseInt(args[0]) : 38700;
             int cp = args.length > 1 ? Integer.parseInt(args[1]) : 38701;
+            int extra = 2;
+            if (args.length > 4 && esEntero(args[2]) && esEntero(args[3]) && esEntero(args[4])) {
+                gWidth = Math.max(320, Integer.parseInt(args[2]));
+                gHeight = Math.max(240, Integer.parseInt(args[3]));
+                gFps = Math.max(15, Math.min(60, Integer.parseInt(args[4])));
+                extra = 5;
+            }
+            if (args.length > extra) gBindAddress = args[extra++];
+            if (args.length > extra) gAccessToken = args[extra];
+            log("perfil solicitado: " + gWidth + "x" + gHeight + "@" + gFps);
             run(vp, cp);
         } catch (Throwable t) {
             log("FATAL " + t);
@@ -242,15 +258,18 @@ Acquire.declararPaqueteShell(gCtx);
         gCamThread.start();
         gCamHandler = new Handler(gCamThread.getLooper());
 
-        ServerSocket videoSrv = new ServerSocket(videoPort, 1, InetAddress.getByName("127.0.0.1"));
-        ServerSocket ctrlSrv = new ServerSocket(ctrlPort, 1, InetAddress.getByName("127.0.0.1"));
-        log("escuchando video=" + videoPort + " control=" + ctrlPort);
+        if (gAccessToken.length() != 64)
+            throw new IllegalArgumentException("token de transporte invalido");
+        ServerSocket videoSrv = new ServerSocket(videoPort, 1, InetAddress.getByName(gBindAddress));
+        ServerSocket ctrlSrv = new ServerSocket(ctrlPort, 1, InetAddress.getByName(gBindAddress));
+        log("escuchando video=" + videoSrv.getLocalPort() + " control=" + ctrlSrv.getLocalPort());
 
-        Socket cs = ctrlSrv.accept();
+        Socket cs = aceptarAutenticado(ctrlSrv);
         openCtrl(cs);
         hello(cams);
 
-        Socket vs = videoSrv.accept();
+        Socket vs = aceptarAutenticado(videoSrv);
+        vs.setTcpNoDelay(true);
         OutputStream vout = new BufferedOutputStream(vs.getOutputStream(), 1 << 16);
         log("PC conectada desde " + vs.getRemoteSocketAddress());
 
@@ -276,6 +295,31 @@ Acquire.declararPaqueteShell(gCtx);
         try { videoSrv.close(); } catch (Throwable ignored) { }
         try { ctrlSrv.close(); } catch (Throwable ignored) { }
         log("fin");
+    }
+
+    private static Socket aceptarAutenticado(ServerSocket servidor) throws IOException {
+        byte[] esperado = gAccessToken.getBytes(Charset.forName("US-ASCII"));
+        while (true) {
+            Socket cliente = servidor.accept();
+            boolean valido = false;
+            try {
+                cliente.setSoTimeout(5000);
+                byte[] recibido = new byte[esperado.length];
+                new DataInputStream(cliente.getInputStream()).readFully(recibido);
+                valido = MessageDigest.isEqual(esperado, recibido);
+                if (valido) {
+                    cliente.setSoTimeout(0);
+                    return cliente;
+                }
+            } catch (IOException ignored) {
+            }
+            try { cliente.close(); } catch (IOException ignored) { }
+        }
+    }
+
+    private static boolean esEntero(String valor) {
+        try { Integer.parseInt(valor); return true; }
+        catch (NumberFormatException e) { return false; }
     }
 
     // ================================================================ encoder
@@ -360,6 +404,7 @@ Acquire.declararPaqueteShell(gCtx);
                             boolean config = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
                             if (!config) {
                                 writeAnnexB(data);
+                                out.flush();
                                 total.incrementAndGet();
                                 frames.incrementAndGet();
                             } else if (!csdDone.get()) {
@@ -394,7 +439,6 @@ Acquire.declararPaqueteShell(gCtx);
             // start code con una longitud corrompe SPS/PPS y los frames.
             if (esAnnexB(d)) {
                 out.write(d);
-                out.flush();
                 return;
             }
             int i = 0;
@@ -411,7 +455,6 @@ Acquire.declararPaqueteShell(gCtx);
             }
             if (!any && i < d.length) { out.write(START); out.write(d, i, d.length - i); }
             else if (i == d.length && !any) { out.write(d); }
-            out.flush();
         }
 
         private void writeCsd(MediaFormat fmt) throws Exception {
@@ -583,14 +626,23 @@ Acquire.declararPaqueteShell(gCtx);
 
             if (rr != null && maxD != null) {
                 float min = rr.getLower(), max = rr.getUpper();
-                float target = min + (max - min) * gZoomFrac;
+                // Empezar en 1x (o el valor soportado mas cercano), no en el
+                // limite ultra-wide ni en el maximo de zoom.
+                float base = Math.max(min, Math.min(1.0f, max));
+                float target;
+                if (gZoomFrac < 0.0f) {
+                    // Alejar por debajo de 1x solo si el telefono expone ese rango optico.
+                    target = 1.0f + (1.0f - min) * gZoomFrac;
+                } else {
+                    target = base + (max - base) * gZoomFrac;
+                }
                 if (target > max) target = max;
                 if (target < min) target = min;
                 b.set(CaptureRequest.CONTROL_ZOOM_RATIO, target);
                 return;
             }
             if (active != null && maxD != null && maxD > 1f) {
-                float scale = 1.0f / Math.max(0.05f, gZoomFrac);
+                float scale = 1.0f + Math.max(0.0f, maxD - 1.0f) * gZoomFrac;
                 int w = (int) Math.round(active.width() / scale);
                 int h = (int) Math.round(active.height() / scale);
                 w = Math.max(1, Math.min(active.width(), w));
@@ -653,7 +705,7 @@ private static void openCtrl(Socket s) throws Exception {
                 if (cmd.equals("cameras")) {
                     hello(enumerate(gCamMgr));
                 } else if (cmd.equals("zoom")) {
-                    gZoomFrac = (float) Math.max(0.0, Math.min(1.0, jnum(line, "value", 1.0)));
+                    gZoomFrac = (float) Math.max(-1.0, Math.min(1.0, jnum(line, "value", 0.0)));
                     repeating();
                     state();
                 } else if (cmd.equals("torch")) {
@@ -694,7 +746,8 @@ private static void openCtrl(Socket s) throws Exception {
         ctrl("{\"t\":\"busy\",\"m\":" + q("Reiniciando camara...") + "}");
         closeCam();
         gCamId = id;
-        gZoomFrac = 1.0f;
+        gZoomFrac = 0.0f;
+        gTorch = false;
         gPaused = false;
         openCameraAndSession();
         state();
@@ -834,7 +887,10 @@ private static void openCtrl(Socket s) throws Exception {
 
                     StreamConfigurationMap scm = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
                     if (scm != null) {
-                        Size[] st = scm.getOutputSizes(Surface.class);
+                        // Surface.class no describe el tipo de consumidor soportado por Camera2;
+                        // en algunos telefonos devuelve null y nearestSize cae silenciosamente
+                        // al default 1280x720, aunque el perfil Wi-Fi haya pedido menos.
+                        Size[] st = scm.getOutputSizes(MediaCodec.class);
                         TreeSet<Long> set = new TreeSet<Long>();
                         if (st != null) {
                             for (Size s : st) set.add((long) s.getWidth() * 1000000L + s.getHeight());
@@ -845,7 +901,10 @@ private static void openCtrl(Socket s) throws Exception {
                         // recorre al reves para dejar la lista de mayor a menor.
                         List<Long> asc = new ArrayList<Long>(set);
                         List<Integer> flat = new ArrayList<Integer>();
-                        int limit = Math.min(asc.size(), 12);
+                        // Incluye también los tamaños pequeños: limitarse a los
+                        // 12 mayores hacía que el perfil Wi-Fi 640x480 terminara
+                        // negociando 720p/1080p en teléfonos con muchas opciones.
+                        int limit = asc.size();
                         for (int k = 0; k < limit; k++) {
                             long v = asc.get(asc.size() - 1 - k);
                             flat.add((int) (v / 1000000L));

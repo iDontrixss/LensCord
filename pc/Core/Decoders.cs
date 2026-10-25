@@ -87,14 +87,18 @@ public sealed class FfmpegH264Decoder : IFuenteVideo
         };
 foreach (var a in new[]
         {
-            "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "nobuffer",
             "-flags", "low_delay",
             "-f", "h264", "-i", "pipe:0",
-            // Salida rawvideo: pipe:1 es el ARCHIVO de salida, con tamano y cadencia.
+            // La salida raw debe tener exactamente el tamano que DrenarAsync lee.
+            // video_size/framerate son opciones de entrada rawvideo y no fijan
+            // dimensiones de un stream H.264; la escala explicita evita que un
+            // formato negociado distinto se convierta en mosaicos de frames.
+            // Llena el cuadro sin barras: escala hasta cubrirlo y recorta el excedente al centro.
+            "-vf", $"scale={Ancho}:{Alto}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop={Ancho}:{Alto}",
+            "-fps_mode", "passthrough",
             "-f", "rawvideo",
             "-pix_fmt", "bgra",
-            "-video_size", $"{ancho}x{alto}",
-            "-framerate", "30",
             "pipe:1"
         }) psi.ArgumentList.Add(a);
 

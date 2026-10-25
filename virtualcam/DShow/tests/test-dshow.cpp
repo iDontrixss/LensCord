@@ -14,11 +14,13 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
+#include <psapi.h>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
 #pragma comment(lib, "strmiids.lib")
 #pragma comment(lib, "uuid.lib")
+#pragma comment(lib, "psapi.lib")
 
 // ---------------------------------------------------------------------------
 // GUIDs conocidos a mano (no dependen de uuids.h)
@@ -209,6 +211,7 @@ static int ModoFactory(const wchar_t* rutaDll)
 static volatile LONG ts_recibidos = 0;
 static volatile LONG ts_ultLen = 0;
 static volatile LONG ts_allocExterno = 0;   // 1 si NotifyAllocator recibio un allocator externo
+static volatile LONG ts_darAllocator = 0;   // 1: GetAllocator entrega CLSID_MemoryAllocator SIN comprometer (modo allocs/ciclos)
 static int g_wNeg = 0, g_hNeg = 0;
 static bool g_i420Neg = true;
 static std::vector<unsigned char> ts_ultFrame, ts_previoFrame;
@@ -227,6 +230,8 @@ public:
     ~TsFiltro()
     {
         if (m_grafo) { m_grafo->Release(); m_grafo = nullptr; }
+        if (m_allocador) { m_allocador->Release(); m_allocador = nullptr; }
+        if (m_allocAviso) { m_allocAviso->Release(); m_allocAviso = nullptr; }
     }
 
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override
@@ -347,9 +352,30 @@ public:
     STDMETHODIMP NewSegment(REFERENCE_TIME, REFERENCE_TIME, double) override { return S_OK; }
 
     // --- IMemInputPin --------------------------------------------------------
-    STDMETHODIMP GetAllocator(IMemAllocator**) override { return E_NOTIMPL; }   // fuerza el MemAlloc del filtro
+    STDMETHODIMP GetAllocator(IMemAllocator** ppv) override
+    {
+        if (!ppv) return E_POINTER;
+        *ppv = nullptr;
+        if (InterlockedCompareExchange(&ts_darAllocator, 0, 0) == 0)
+            return E_NOTIMPL;   // por defecto: fuerza el MemAlloc del filtro (modo body)
+        if (!m_allocador)
+        {
+            // allocator estandar de DirectShow SIN comprometer (como hace Discord)
+            const HRESULT hrA = CoCreateInstance(CLSID_MemoryAllocator, nullptr,
+                CLSCTX_INPROC_SERVER, IID_IMemAllocator,
+                reinterpret_cast<void**>(&m_allocador));
+            if (FAILED(hrA)) return hrA;
+        }
+        m_allocador->AddRef();
+        *ppv = m_allocador;
+        return S_OK;
+    }
     STDMETHODIMP NotifyAllocator(IMemAllocator* a, BOOL) override
     {
+        IMemAllocator* anterior = m_allocAviso;
+        m_allocAviso = a;
+        if (m_allocAviso) m_allocAviso->AddRef();
+        if (anterior) anterior->Release();
         if (a) InterlockedExchange(&ts_allocExterno, 1);
         return S_OK;
     }
@@ -445,6 +471,8 @@ private:
     AM_MEDIA_TYPE m_mtRecibido = {};
     IFilterGraph* m_grafo = nullptr;
     int m_estado = 0;
+    IMemAllocator* m_allocador = nullptr;    // allocator estandar creado por GetAllocator (modo allocs)
+    IMemAllocator* m_allocAviso = nullptr;   // copia recibida via NotifyAllocator
 };
 
 class TsEnumPinsL : public IEnumPins
@@ -910,6 +938,305 @@ static int ModoRender()
     return Fallos ? 1 : 0;
 }
 
+// ---------------------------------------------------------------------------
+// Helper: enumerar y abrir la primera camara "Lenscord" (via registro).
+// ---------------------------------------------------------------------------
+static IBaseFilter* AbrirCamaraLenscord()
+{
+    ICreateDevEnum* devEnum = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ICreateDevEnum, reinterpret_cast<void**>(&devEnum));
+    if (FAILED(hr) || !devEnum) return nullptr;
+    IEnumMoniker* em = nullptr;
+    devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &em, 0);
+    IBaseFilter* camara = nullptr;
+    if (em)
+    {
+        IMoniker* mk = nullptr;
+        while (em->Next(1, &mk, nullptr) == S_OK)
+        {
+            LPOLESTR nombre = nullptr;
+            mk->GetDisplayName(nullptr, nullptr, &nombre);
+            if (nombre && wcsstr(nombre, L"Lenscord") != nullptr && !camara)
+                mk->BindToObject(nullptr, nullptr, IID_IBaseFilter,
+                    reinterpret_cast<void**>(&camara));
+            if (nombre) CoTaskMemFree(nombre);
+            mk->Release();
+            if (camara) break;
+        }
+        em->Release();
+    }
+    devEnum->Release();
+    return camara;
+}
+
+// ---------------------------------------------------------------------------
+// Modo allocs: replica el orden real de Discord/libwebrtc con un sink que
+// OFRECE su propio allocator estandar (CLSID_MemoryAllocator) SIN comprometer:
+//   (1) IMediaFilter::SetSyncSource(NULL)
+//   (2) IAMStreamConfig::SetFormat ANTES de conectar (I420 1280x720)
+//   (3) IGraphBuilder::ConnectDirect(pinCam, pinSink)
+//   (4) IMediaControl::Run -> exigir >= 30 frames en 2 s con la longitud del
+//       formato conectado.
+// Si el filtro no fuerza el Commit del allocator que mano el sink,
+// GetBuffer devuelve VFW_E_NOT_COMMITTED, el hilo de entrega muere en silencio
+// y no sale ningun frame (hallazgo 1).
+// ---------------------------------------------------------------------------
+static int ModoAllocExterno()
+{
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    wprintf(L"=== allocs (allocator del sink SIN comprometer)\n");
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    IBaseFilter* camara = AbrirCamaraLenscord();
+    Marcar(L"enumeracion encontro Lenscord", camara != nullptr);
+    if (!camara) { CoUninitialize(); return 1; }
+
+    IGraphBuilder* grafo = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER,
+        IID_IGraphBuilder, reinterpret_cast<void**>(&grafo));
+    Marcar(L"IGraphBuilder", hr == S_OK && grafo);
+    if (!grafo) { camara->Release(); CoUninitialize(); return 1; }
+
+    hr = grafo->AddFilter(camara, L"Lenscord");
+    Marcar(L"AddFilter (Lenscord)", hr == S_OK);
+
+    // (1) reloj del grafo en NULL
+    IMediaFilter* mf = nullptr;
+    hr = grafo->QueryInterface(IID_IMediaFilter, reinterpret_cast<void**>(&mf));
+    if (SUCCEEDED(hr) && mf)
+    {
+        const HRESULT hrS = mf->SetSyncSource(nullptr);
+        Marcar(L"SetSyncSource(NULL)", hrS == S_OK);
+        mf->Release();
+    }
+    else Marcar(L"IMediaFilter del grafo", false);
+
+    // sink que entrega allocator propio sin comprometer
+    InterlockedExchange(&ts_darAllocator, 1);
+    InterlockedExchange(&ts_allocExterno, 0);
+    TsFiltro* sink = new TsFiltro();
+    IBaseFilter* sinkFiltro = static_cast<IBaseFilter*>(sink);
+    IPin* pinSinkIn = static_cast<IPin*>(sink);
+    hr = grafo->AddFilter(sinkFiltro, L"Receptor");
+    Marcar(L"AddFilter (TestSink)", hr == S_OK);
+
+    IPin* pinCam = nullptr;
+    {
+        IEnumPins* ep = nullptr;
+        if (SUCCEEDED(camara->EnumPins(&ep)) && ep) { ep->Next(1, &pinCam, nullptr); ep->Release(); }
+    }
+    Marcar(L"pin de camara", pinCam != nullptr);
+    if (!pinCam)
+    {
+        sinkFiltro->Release(); grafo->Release(); camara->Release();
+        CoUninitialize();
+        return 1;
+    }
+
+    // (2) SetFormat ANTES de conectar
+    IAMStreamConfig* sc = nullptr;
+    pinCam->QueryInterface(IID_IAMStreamConfig, reinterpret_cast<void**>(&sc));
+    if (sc)
+    {
+        AM_MEDIA_TYPE mtA = MtConstruido(0, 1280, 720, 333333);
+        const HRESULT hrF = sc->SetFormat(&mtA);
+        Marcar(L"SetFormat previo (I420 1280x720)", hrF == S_OK);
+        sc->Release();
+    }
+    else Marcar(L"IAMStreamConfig en el pin", false);
+
+    // (3) conexion directa sin media type: el filtro propone su formato pendiente
+    hr = grafo->ConnectDirect(pinCam, pinSinkIn, nullptr);
+    Marcar(L"ConnectDirect", hr == S_OK);
+    const bool conectado = SUCCEEDED(hr);
+
+    long esperado = 1280 * 720 * 3 / 2;
+    if (conectado)
+    {
+        AM_MEDIA_TYPE mtNeg = {};
+        if (SUCCEEDED(pinCam->ConnectionMediaType(&mtNeg)))
+        {
+            if (mtNeg.pbFormat && mtNeg.cbFormat >= sizeof(VIDEOINFOHEADER))
+            {
+                auto* vih = reinterpret_cast<const VIDEOINFOHEADER*>(mtNeg.pbFormat);
+                esperado = vih->bmiHeader.biSizeImage;
+            }
+            if (mtNeg.pbFormat) CoTaskMemFree(mtNeg.pbFormat);
+        }
+        wprintf(L"       formato conectado: subtipo=%s esperado por muestra=%ld\n",
+            TextoGuid(mtNeg.subtype).c_str(), esperado);
+
+        // (4) correr y contar
+        IMediaControl* control = nullptr;
+        hr = grafo->QueryInterface(IID_IMediaControl, reinterpret_cast<void**>(&control));
+        if (SUCCEEDED(hr) && control)
+        {
+            hr = control->Run();
+            Marcar(L"IMediaControl::Run", hr == S_OK || hr == S_FALSE);
+            Sleep(2000);
+
+            // diagnostico interno del filtro (hr del ultimo GetBuffer, etc.)
+            typedef const LONG* (__stdcall* FnDiag)();
+            HMODULE mDiag = GetModuleHandleW(L"Lenscord.VirtualCamera.DShow.dll");
+            if (mDiag)
+            {
+                auto* diag = reinterpret_cast<FnDiag>(GetProcAddress(mDiag, "LenscordDiag"));
+                if (diag)
+                {
+                    const LONG* d = diag();
+                    wprintf(L"       [diag] hilo=%ld iter=%ld conect=%ld hrGetBuf=%ld fallosGetBuf=%ld okGetBuf=%ld\n",
+                        d[0], d[1], d[2], d[3], d[4], d[5]);
+                    if (d[4] > 0)
+                        wprintf(L"       [diag] hrGetBuf=0x%08X%s\n",
+                            static_cast<HRESULT>(d[3]),
+                            static_cast<HRESULT>(d[3]) == VFW_E_NOT_COMMITTED ? L" (VFW_E_NOT_COMMITTED)" : L"");
+                }
+            }
+
+            wprintf(L"       NotifyAllocator: %s\n",
+                ts_allocExterno ? L"allocator externo (del sink)" : L"allocator propio del filtro");
+            wprintf(L"       samples en 2 s: %ld (esperado >= 30)\n", ts_recibidos);
+            Marcar(L"frames entregados (allocator del sink, >= 30)", ts_recibidos >= 30);
+            wprintf(L"       longitud ultima muestra: %ld (esperado %ld)\n", ts_ultLen, esperado);
+            Marcar(L"longitud coincide con el formato conectado", ts_ultLen == esperado);
+
+            control->Stop();
+            control->Release();
+        }
+        else Marcar(L"IMediaControl", false);
+    }
+    else Marcar(L"conexion del grafo", false);
+
+    pinCam->Release();
+    grafo->RemoveFilter(sinkFiltro);
+    sinkFiltro->Release();
+    grafo->Release();
+    camara->Release();
+    CoUninitialize();
+    wprintf(L"=== allocs: %d/%d pruebas correctas\n", Ok, Total);
+    return Fallos ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Modo ciclos: 20 ciclos Run/Stop sobre la MISMA conexion (allocator del sink,
+// igual que Discord). Sin crash y sin crecimiento de memoria del proceso
+// (PrivateUsage via GetProcessMemoryInfo / psapi).
+// ---------------------------------------------------------------------------
+static int ModoCiclos()
+{
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    wprintf(L"=== ciclos (20 Run/Stop)\n");
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    IBaseFilter* camara = AbrirCamaraLenscord();
+    Marcar(L"enumeracion encontro Lenscord", camara != nullptr);
+    if (!camara) { CoUninitialize(); return 1; }
+
+    IGraphBuilder* grafo = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER,
+        IID_IGraphBuilder, reinterpret_cast<void**>(&grafo));
+    Marcar(L"IGraphBuilder", hr == S_OK && grafo);
+    if (!grafo) { camara->Release(); CoUninitialize(); return 1; }
+
+    hr = grafo->AddFilter(camara, L"Lenscord");
+    Marcar(L"AddFilter (Lenscord)", hr == S_OK);
+
+    InterlockedExchange(&ts_darAllocator, 1);   // mismo camino del allocator que Discord
+    TsFiltro* sink = new TsFiltro();
+    IBaseFilter* sinkFiltro = static_cast<IBaseFilter*>(sink);
+    IPin* pinSinkIn = static_cast<IPin*>(sink);
+    hr = grafo->AddFilter(sinkFiltro, L"Receptor");
+    Marcar(L"AddFilter (TestSink)", hr == S_OK);
+
+    IPin* pinCam = nullptr;
+    {
+        IEnumPins* ep = nullptr;
+        if (SUCCEEDED(camara->EnumPins(&ep)) && ep) { ep->Next(1, &pinCam, nullptr); ep->Release(); }
+    }
+    Marcar(L"pin de camara", pinCam != nullptr);
+    if (!pinCam) goto fuera_con_error;
+
+    {
+        IAMStreamConfig* sc = nullptr;
+        pinCam->QueryInterface(IID_IAMStreamConfig, reinterpret_cast<void**>(&sc));
+        if (sc)
+        {
+            AM_MEDIA_TYPE mtA = MtConstruido(0, 1280, 720, 333333);
+            const HRESULT hrF = sc->SetFormat(&mtA);
+            Marcar(L"SetFormat previo (I420 1280x720)", hrF == S_OK);
+            sc->Release();
+        }
+
+        hr = grafo->ConnectDirect(pinCam, pinSinkIn, nullptr);
+        Marcar(L"ConnectDirect", hr == S_OK);
+        if (SUCCEEDED(hr))
+        {
+            IMediaControl* control = nullptr;
+            hr = grafo->QueryInterface(IID_IMediaControl, reinterpret_cast<void**>(&control));
+            if (SUCCEEDED(hr) && control)
+            {
+                SIZE_T privadaBase = 0;          // referencia tomada tras el ciclo 1
+                long framesAnteriores = 0;
+                bool constFrames = true;
+                const long minimoPorCiclo = 8;   // 500 ms a 30 fps ~ 15 frames
+
+                for (int c = 1; c <= 20; ++c)
+                {
+                    const HRESULT hrRun = control->Run();
+                    Sleep(500);
+                    const long duranteRun = ts_recibidos;
+                    const HRESULT hrStop = control->Stop();
+                    Sleep(150);
+                    const long delCiclo = duranteRun - framesAnteriores;
+                    framesAnteriores = ts_recibidos;
+                    wprintf(L"  ciclo %2d: run=0x%08X stop=0x%08X frames=%ld\n", c, hrRun, hrStop, delCiclo);
+                    if (delCiclo < minimoPorCiclo) constFrames = false;
+
+                    if (c == 1)
+                    {
+                        PROCESS_MEMORY_COUNTERS_EX m1 = {};
+                        if (GetProcessMemoryInfo(GetCurrentProcess(),
+                            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m1), sizeof(m1)))
+                            privadaBase = m1.PrivateUsage;
+                    }
+                }
+
+                long long crecimiento = -1;
+                {
+                    PROCESS_MEMORY_COUNTERS_EX m2 = {};
+                    if (GetProcessMemoryInfo(GetCurrentProcess(),
+                        reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m2), sizeof(m2)) && privadaBase != 0)
+                        crecimiento = static_cast<long long>(m2.PrivateUsage) - static_cast<long long>(privadaBase);
+                }
+                wprintf(L"       memoria privada: referencia=%zu delta=%lld bytes (%.1f MB)\n",
+                    privadaBase, crecimiento,
+                    static_cast<double>(crecimiento) / (1024.0 * 1024.0));
+                Marcar(L"20 ciclos Run/Stop sin crash", true);
+                Marcar(L"frames por ciclo (>= 8) en los 20 ciclos", constFrames);
+                Marcar(L"crecimiento de memoria < 10 MB", crecimiento >= 0 && crecimiento < 10 * 1024 * 1024);
+                control->Release();
+            }
+            else Marcar(L"IMediaControl", false);
+        }
+        else Marcar(L"conexion del grafo", false);
+    }
+
+    pinCam->Release();
+    grafo->RemoveFilter(sinkFiltro);
+    sinkFiltro->Release();
+    grafo->Release();
+    camara->Release();
+    CoUninitialize();
+    wprintf(L"=== ciclos: %d/%d pruebas correctas\n", Ok, Total);
+    return Fallos ? 1 : 0;
+
+fuera_con_error:
+    sinkFiltro->Release(); grafo->Release(); camara->Release();
+    CoUninitialize();
+    return 1;
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     if (argc >= 3 && wcscmp(argv[1], L"factory") == 0)
@@ -918,6 +1245,10 @@ int wmain(int argc, wchar_t** argv)
         return ModoBody();
     if (argc >= 2 && wcscmp(argv[1], L"render") == 0)
         return ModoRender();
-    wprintf(L"uso: test-dshow.exe factory <ruta\\dll> | body | render\n");
+    if (argc >= 2 && wcscmp(argv[1], L"allocs") == 0)
+        return ModoAllocExterno();
+    if (argc >= 2 && wcscmp(argv[1], L"ciclos") == 0)
+        return ModoCiclos();
+    wprintf(L"uso: test-dshow.exe factory <ruta\\dll> | body | render | allocs | ciclos\n");
     return 2;
 }

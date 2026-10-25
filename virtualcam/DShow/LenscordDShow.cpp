@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // Lenscord.VirtualCamera.DShow â€” Filtro DirectShow de captura "Lenscord"
 //
 // Camara virtual user-mode (sin driver de kernel) para aplicaciones basadas
@@ -24,6 +24,7 @@
 #include <new>
 #include <memory>
 #include <vector>
+#include <cstdarg>   // LogDiagLinea (vswprintf_s)
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
@@ -107,6 +108,103 @@ struct Guardia
 static LONG g_objetosVivos = 0;
 
 static HMODULE g_hModulo = nullptr;
+
+// ---------------------------------------------------------------------------
+// Log de diagnostico en archivo: %ProgramData%\Lenscord\dshow-<pid>.log
+// El array g_diag solo existe dentro del proceso huesped (Discord) y no se
+// puede leer desde afuera; este log persiste lo mismo para post-mortem.
+// Sin dependencias nuevas: SHGetFolderPathW + CreateFileW/WriteFile y una
+// seccion como lock. Tope 1 MB por archivo: al superarlo se deja de escribir.
+// ---------------------------------------------------------------------------
+struct LogDiag
+{
+    Seccion cs;
+    HANDLE archivo = nullptr;
+    unsigned long long bytes = 0;
+    bool techo = false;
+
+    static LogDiag& Presente()
+    {
+        static LogDiag instancia;
+        return instancia;
+    }
+
+    static void Ruta(wchar_t* ruta, size_t capacidad)
+    {
+        ruta[0] = L'\0';
+        wchar_t base[MAX_PATH] = L"";
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_COMMON_APPDATA, nullptr, 0, base)))
+            _snwprintf_s(ruta, capacidad, _TRUNCATE, L"%s\\Lenscord\\dshow-%lu.log", base, GetCurrentProcessId());
+    }
+
+    void LineaV(const wchar_t* formato, va_list args)
+    {
+        wchar_t texto[512];
+        _vsnwprintf_s(texto, _TRUNCATE, formato, args);
+
+        Guardia g(&cs);
+        if (techo) return;
+
+        if (!archivo)
+        {
+            wchar_t ruta[MAX_PATH + 12];
+            Ruta(ruta, MAX_PATH + 12);
+            archivo = CreateFileW(ruta, FILE_APPEND_DATA,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (archivo == INVALID_HANDLE_VALUE)
+            {
+                archivo = nullptr;
+                techo = true;
+                return;
+            }
+            LARGE_INTEGER tam = {};
+            if (GetFileSizeEx(archivo, &tam)) bytes = static_cast<unsigned long long>(tam.QuadPart);
+        }
+
+        SYSTEMTIME st = {};
+        GetLocalTime(&st);
+        wchar_t linea[640];
+        swprintf_s(linea, L"[%02u:%02u:%02u.%03u] %s\r\n",
+            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, texto);
+
+        // UTF-16LE con BOM la primera vez (Notepad/VSCode lo interpretan solos)
+        if (bytes == 0)
+        {
+            const wchar_t bom = L'\xFEFF';
+            DWORD escritos = 0;
+            if (WriteFile(archivo, &bom, sizeof(bom), &escritos, nullptr))
+                bytes += escritos;
+        }
+        DWORD escritos = 0;
+        const DWORD cbLinea = static_cast<DWORD>(wcslen(linea) * sizeof(wchar_t));
+        if (WriteFile(archivo, linea, cbLinea, &escritos, nullptr))
+        {
+            bytes += escritos;
+            if (bytes > (1ull << 20)) techo = true;   // techo 1 MB: dejar de escribir
+        }
+    }
+};
+
+static void LogDiagLinea(const wchar_t* formato, ...)
+{
+    va_list args;
+    va_start(args, formato);
+    LogDiag::Presente().LineaV(formato, args);
+    va_end(args);
+}
+
+// Registra (hasta 200 veces) las interfaces que el huesped pide y no implementamos.
+static void LogIid(const wchar_t* donde, REFIID r)
+{
+    static volatile LONG veces = 0;
+    if (InterlockedIncrement(&veces) > 200) return;
+    LogDiagLinea(L"QI no soportada en %s: {%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        donde, r.Data1, r.Data2, r.Data3,
+        r.Data4[0], r.Data4[1], r.Data4[2], r.Data4[3],
+        r.Data4[4], r.Data4[5], r.Data4[6], r.Data4[7]);
+}
+
 
 // ---------------------------------------------------------------------------
 // FramePool â€” lector del archivo compartido (header + 2 slots + secuencia)
@@ -277,7 +375,7 @@ static void ConvertirNV12(const uint8_t* nv12, uint8_t* destino, const GUID& tip
         const int sy = y * kAlto / h;
         const uint8_t* filaY = yPlan + sy * kAncho;
         const uint8_t* filaUv = uvPlan + (sy / 2) * kAncho;
-        uint8_t* cur = destino + static_cast<size_t>(y) * w * paso;
+        uint8_t* cur = destino + static_cast<size_t>(h - 1 - y) * w * paso;   // BI_RGB con biHeight>0 es bottom-up
         for (int x = 0; x < w; ++x)
         {
             const int sx = x * kAncho / w;
@@ -578,7 +676,8 @@ private:
         Guardia g(&m_cs);
         m_prestados = 0;
         Free();
-        m_props = ALLOCATOR_PROPERTIES{};
+        // m_props se conserva: un Commit posterior reusa las propiedades ya
+        // negociadas, incluyendo el margen hasta kTamanoSampleMax (hallazgo 4).
         SetEvent(m_evLibre);
     }
 
@@ -645,6 +744,14 @@ static bool EsSubtipoSoportado(const GUID& tipo)
     return tipo == MEDIASUBTYPE_I420_LEN || tipo == MEDIASUBTYPE_RGB24 || tipo == MEDIASUBTYPE_RGB32;
 }
 
+static const wchar_t* SubTipoNombre(const GUID& tipo)
+{
+    if (tipo == MEDIASUBTYPE_I420_LEN) return L"I420";
+    if (tipo == MEDIASUBTYPE_RGB24) return L"RGB24";
+    if (tipo == MEDIASUBTYPE_RGB32) return L"RGB32";
+    return L"otro";
+}
+
 static const GUID& SubtipoPorIndice(int f)
 {
     static const GUID* tabla[3] = { gpSubI420, &MEDIASUBTYPE_RGB24, &MEDIASUBTYPE_RGB32 };
@@ -697,10 +804,11 @@ public:
     HRESULT ConectarInterno(IPin* pinReceptor, const AM_MEDIA_TYPE* mt);
     void DesconectarInterno();
     HRESULT IniciarHilo();
-    void PararHilo();
+    bool PararHilo();   // false: el hilo quedo zombi (no se mata, se loguea)
     void Limpiar();
     HRESULT CopiarFormato(int indice, AM_MEDIA_TYPE** mt, BYTE* caps);   // GetStreamCaps/Enum
     bool HayConexion() const { return m_pinEntrada != nullptr; }
+    bool HayHiloColgado() const { return m_hiloColgado != nullptr; }
 
 private:
     friend class LenscordFilter;
@@ -736,6 +844,10 @@ private:
     HANDLE m_hilo = nullptr;
     HANDLE m_evSalir = nullptr;
     volatile LONG m_runFlag = 0;
+    HANDLE m_hiloColgado = nullptr;     // hilo zombi: PararHilo no pudo detenerlo (no se mata)
+    LONG m_framesEntregados = 0;        // log: los primeros 5 frames, luego 1 de cada 300
+    LONG m_fallosGetBuf = 0;            // log: primera vez y cada 100 fallos de GetBuffer
+    LONG m_fallosReceive = 0;           // log: primera vez y cada 100 fallos de Receive
     LONGLONG m_baseQpc = 0;            // anclaje del tiempo de stream sintetico
     bool m_tengoPrimerFrame = false;
 
@@ -863,7 +975,7 @@ private:
 // LenscordFilter â€” IBaseFilter + IPersist + IAMStreamConfig (delega al pin)
 // ---------------------------------------------------------------------------
 // IBaseFilter ya hereda IPersist (evitamos la base redundante)
-class LenscordFilter : public IBaseFilter, public IAMStreamConfig
+class LenscordFilter : public IBaseFilter, public IAMStreamConfig, public IPersistPropertyBag, public IAMFilterMiscFlags
 {
 public:
     LenscordFilter()
@@ -875,7 +987,13 @@ public:
     {
         if (m_pin)
         {
-            m_pin->PararHilo();
+            // Hallazgo 3: sin TerminateThread. Si el hilo no sale en el plazo,
+            // el objeto entero se filtra (no se borra) para que `this` siga
+            // siendo valido mientras el worker exista; ademas no se decrementa
+            // g_objetosVivos, con lo cual DllCanUnloadNow queda en S_FALSE
+            // y la DLL sigue cargada hasta el fin del proceso.
+            if (!m_pin->PararHilo() || m_pin->HayHiloColgado())
+                return;
             m_pin->DesconectarInterno();
             delete m_pin;
             m_pin = nullptr;
@@ -897,12 +1015,16 @@ public:
         else if (riid == IID_IMediaFilter)
             *ppv = static_cast<IMediaFilter*>(this);
         else if (riid == IID_IPersist)
-            *ppv = static_cast<IPersist*>(this);
+            *ppv = static_cast<IPersist*>(static_cast<IBaseFilter*>(this));
         else if (riid == IID_IBaseFilter)
             *ppv = static_cast<IBaseFilter*>(this);
         else if (riid == IID_IAMStreamConfig)
             *ppv = static_cast<IAMStreamConfig*>(this);
-        else { *ppv = nullptr; return E_NOINTERFACE; }
+        else if (riid == IID_IPersistPropertyBag)
+            *ppv = static_cast<IPersistPropertyBag*>(this);
+        else if (riid == IID_IAMFilterMiscFlags)
+            *ppv = static_cast<IAMFilterMiscFlags*>(this);
+        else { LogIid(L"filtro", riid); *ppv = nullptr; return E_NOINTERFACE; }
         AddRefExterno();
         return S_OK;
     }
@@ -910,7 +1032,14 @@ public:
     STDMETHODIMP_(ULONG) Release() override
     {
         const ULONG r = InterlockedDecrement(&m_refs);
-        if (r == 0) delete this;
+        if (r == 0)
+        {
+            // Fuga intencional si quedo un hilo zombi: el worker aun puede tocar
+            // m_filtro->m_cs, y un `return` en el destructor no evita que la
+            // memoria se libere ni que se destruyan los miembros.
+            if (m_pin && m_pin->HayHiloColgado()) return 0;
+            delete this;
+        }
         return r;
     }
 
@@ -920,6 +1049,25 @@ public:
         if (!clsid) return E_POINTER;
         *clsid = CLSID_LenscordDShow;
         return S_OK;
+    }
+
+// --- IPersistPropertyBag ---------------------------------------------------
+    STDMETHODIMP InitNew() override { return S_OK; }
+    STDMETHODIMP Load(IPropertyBag* pPropBag, IErrorLog* pErrorLog) override
+    {
+        (void)pPropBag; (void)pErrorLog;
+        return S_OK;
+    }
+    STDMETHODIMP Save(IPropertyBag* pPropBag, BOOL fClearDirty, BOOL fSaveAllProperties) override
+    {
+        (void)pPropBag; (void)fClearDirty; (void)fSaveAllProperties;
+        return S_OK;
+    }
+
+// --- IAMFilterMiscFlags --------------------------------------------------------
+    STDMETHODIMP_(ULONG) GetMiscFlags() override
+    {
+        return AM_FILTER_MISC_FLAGS_IS_SOURCE;
     }
 
     // --- IMediaFilter ------------------------------------------------------
@@ -1038,19 +1186,25 @@ STDMETHODIMP EnumPinosL::Next(ULONG cPines, IPin** pines, ULONG* obtenidos)
 
 HRESULT LenscordFilter::EstadoInt(EstadoFiltro nuevo)
 {
-    Guardia g(&m_cs);
-    if (m_estado == nuevo) return S_OK;
+    LenscordPin* pin = nullptr;
+    bool detener = false;
     HRESULT hr = S_OK;
-    if (nuevo == EstadoFiltro::Parado)
     {
-        m_estado = EstadoFiltro::Parado;
-        if (m_pin) m_pin->PararHilo();
+        Guardia g(&m_cs);
+        if (m_estado == nuevo) return S_OK;
+        if (nuevo == EstadoFiltro::Parado)
+        {
+            m_estado = EstadoFiltro::Parado;
+            pin = m_pin;             // la espera del hilo se hace fuera del lock:
+            detener = true;          // el worker necesita m_cs en cada vuelta
+        }
+        else
+        {
+            if (m_pin) hr = m_pin->IniciarHilo();
+            m_estado = nuevo;
+        }
     }
-    else
-    {
-        if (m_pin) hr = m_pin->IniciarHilo();
-        m_estado = nuevo;
-    }
+    if (detener && pin) pin->PararHilo();
     return hr;
 }
 
@@ -1080,9 +1234,9 @@ STDMETHODIMP LenscordPin::QueryInterface(REFIID riid, void** ppv)
         desconocido = static_cast<IAMStreamConfig*>(this);
     else if (riid == IID_IKsPropertySet)
         desconocido = static_cast<IKsPropertySet*>(this);
-    else if (riid == IID_IKsPropertySetProxy)
+else if (riid == IID_IKsPropertySetProxy)
         desconocido = static_cast<IKsPropertySet*>(this);   // ambas variantes
-    else { *ppv = nullptr; return E_NOINTERFACE; }
+    else { LogIid(L"pin", riid); *ppv = nullptr; return E_NOINTERFACE; }
 
     *ppv = desconocido;
     m_filtro->AddRefExterno();
@@ -1238,6 +1392,8 @@ HRESULT LenscordPin::DecideAllocator()
             if (SUCCEEDED(hr))
             {
                 m_allocador = aloc;   // transferimos la referencia obtenida
+                LogDiagLinea(L"alloc elegido: del sink, cbBuffer=%ld cBuffers=%ld",
+                    real.cbBuffer, real.cBuffers);
                 return S_OK;
             }
         }
@@ -1256,6 +1412,8 @@ HRESULT LenscordPin::DecideAllocator()
     if (SUCCEEDED(hr))
     {
         m_allocador = nuestro;
+        LogDiagLinea(L"alloc elegido: propio (MemAlloc), cbBuffer=%ld cBuffers=%ld",
+            real.cbBuffer, real.cBuffers);
         return S_OK;
     }
     nuestro->Release();
@@ -1268,16 +1426,16 @@ HRESULT LenscordPin::ConectarInterno(IPin* pinReceptor, const AM_MEDIA_TYPE* mt)
     if (!mt) return E_POINTER;
     {
         Guardia g(&m_filtro->m_cs);
-        if (m_entrada) return VFW_E_ALREADY_CONNECTED;
+        if (m_entrada) { LogDiagLinea(L"connect: ya conectado"); return VFW_E_ALREADY_CONNECTED; }
         if (m_filtro->m_estado != LenscordFilter::EstadoFiltro::Parado)
-            return VFW_E_NOT_STOPPED;
+        { LogDiagLinea(L"connect: no parado estado=%d", (int)m_filtro->m_estado); return VFW_E_NOT_STOPPED; }
         if (!EsFormatoValido(mt))
-            return VFW_E_TYPE_NOT_ACCEPTED;
+        { LogDiagLinea(L"connect: formato invalido"); return VFW_E_TYPE_NOT_ACCEPTED; }
     }
 
     // El par debe aceptar el tipo primero
     HRESULT hr = pinReceptor->ReceiveConnection(this, mt);
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) { LogDiagLinea(L"connect: ReceiveConnection fallo 0x%08X", hr); return hr; }
 
     Guardia g(&m_filtro->m_cs);
     if (m_entrada) return VFW_E_ALREADY_CONNECTED;
@@ -1287,6 +1445,7 @@ HRESULT LenscordPin::ConectarInterno(IPin* pinReceptor, const AM_MEDIA_TYPE* mt)
     {
         m_entrada = nullptr;
         pinReceptor->Disconnect();
+        LogDiagLinea(L"connect: IMemInputPin fallo 0x%08X", hr);
         return VFW_E_NO_ACCEPTABLE_TYPES;
     }
 
@@ -1302,15 +1461,18 @@ HRESULT LenscordPin::ConectarInterno(IPin* pinReceptor, const AM_MEDIA_TYPE* mt)
         if (m_mtConectado.pbFormat) { CoTaskMemFree(m_mtConectado.pbFormat); }
         ZeroMemory(&m_mtConectado, sizeof(m_mtConectado));
         pinReceptor->Disconnect();
+        LogDiagLinea(L"connect: DecideAllocator fallo 0x%08X", hr);
         return FAILED(hr) ? hr : E_FAIL;
     }
     // lo conectado define el formato de ahora en adelante
     m_pendiente = false;
+    LogDiagLinea(L"connect: %s %dx%d", SubTipoNombre(m_subtipoConectado), m_wConectado, m_hConectado);
     return S_OK;
 }
 
 STDMETHODIMP LenscordPin::Connect(IPin* pinReceptor, const AM_MEDIA_TYPE* mt)
 {
+    LogDiagLinea(L"Connect llamado (propuesta=%s)", (mt && mt->majortype != kGuidNulo) ? L"si" : L"no");
     if (!pinReceptor) return E_POINTER;
 
     const bool hayPropuesta = (mt != nullptr && mt->majortype != kGuidNulo);
@@ -1383,7 +1545,10 @@ STDMETHODIMP LenscordPin::ReceiveConnection(IPin* conector, const AM_MEDIA_TYPE*
 
 void LenscordPin::DesconectarInterno()
 {
-    PararHilo();
+    // igual que en Limpiar: con hilo zombi no se libera nada rastreado por el
+    // worker (allocator, pin de entrada, buffers)
+    if (!PararHilo()) return;
+    LogDiagLinea(L"disconnect");
     Guardia g(&m_filtro->m_cs);
     if (m_allocador)
     {
@@ -1466,6 +1631,7 @@ STDMETHODIMP LenscordPin::QueryId(LPWSTR* id)
 STDMETHODIMP LenscordPin::QueryAccept(const AM_MEDIA_TYPE* mt)
 {
     if (!mt) return E_POINTER;
+    if (!EsFormatoValido(mt)) LogDiagLinea(L"QueryAccept rechazado: subtipo=%08lX", mt->subtype.Data1);
     return EsFormatoValido(mt) ? S_OK : S_FALSE;
 }
 
@@ -1586,6 +1752,9 @@ STDMETHODIMP LenscordPin::SetFormat(AM_MEDIA_TYPE* mt)
         m_wPendiente = kAncho;
         m_hPendiente = kAlto;
     }
+    LogDiagLinea(L"setformat: %s %dx%d conectado=%s",
+        SubTipoNombre(mt->subtype), wp, hp,
+        HayConexion() ? L"si (afecta a la siguiente conexion)" : L"no");
     return S_OK;
 }
 
@@ -1595,11 +1764,13 @@ STDMETHODIMP LenscordPin::GetFormat(AM_MEDIA_TYPE** mt)
     *mt = nullptr;
     Guardia g(&m_filtro->m_cs);
     const AM_MEDIA_TYPE* fuente = nullptr;
-    // el ultimo SetFormat manda (Discord lo verifica tras pedir formato)
-    if (m_mtSeleccionado.pbFormat)
-        fuente = &m_mtSeleccionado;
-    else if (HayConexion() && m_mtConectado.pbFormat)
+    // Hallazgo 2: una vez conectado, el formato que manda es el conectado
+    // (los frames salen en ese formato); el ultimo SetFormat pendiente solo
+    // aplica a la siguiente conexion.
+    if (HayConexion() && m_mtConectado.pbFormat)
         fuente = &m_mtConectado;
+    else if (m_mtSeleccionado.pbFormat)
+        fuente = &m_mtSeleccionado;
     else
     {
         AM_MEDIA_TYPE* defecto = nullptr;
@@ -1655,7 +1826,7 @@ STDMETHODIMP LenscordPin::Get(REFGUID propSet, DWORD propId, void* /*datosInstan
         if (cbProp < sizeof(GUID)) return HRESULT_FROM_WIN32(ERROR_MORE_DATA);
         if (datosProp)
             memcpy(datosProp, &s_pinCapture, sizeof(GUID));
-        *cbDevuelto = sizeof(GUID);
+        if (cbDevuelto) *cbDevuelto = sizeof(GUID);
         return S_OK;
     }
     return HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND);
@@ -1707,6 +1878,33 @@ HRESULT LenscordPin::IniciarHilo()
 {
     Guardia g(&m_filtro->m_cs);
     if (m_hilo) return S_OK;
+    if (m_hiloColgado && WaitForSingleObject(m_hiloColgado, 0) == WAIT_OBJECT_0)
+    {
+        // el hilo zombi termino por su cuenta: ya se puede armar otro
+        CloseHandle(m_hiloColgado);
+        m_hiloColgado = nullptr;
+        LogDiagLinea(L"hilo zombi termino solo: marcador limpiado");
+    }
+    if (m_hiloColgado)
+    {
+        // Hallazgo 3 (post-arreglo): no se arma un segundo hilo sobre el mismo
+        // pin mientras el anterior (zombi, no muerto) siga existiendo.
+        LogDiagLinea(L"iniciar hilo denegado: queda un hilo zombi en este pin");
+        return E_FAIL;
+    }
+
+    // Hallazgo 1: el allocator que ofrece el sink (CLSID_MemoryAllocator de
+    // Discord) llega sin comprometer; el hilo de entrega muere en GetBuffer
+    // con VFW_E_NOT_COMMITTED y no sale ningun frame. El stream es del filtro:
+    // aqui se garantiza el Commit del allocator elegido, sea proprio o del sink.
+    // (Pause/Run sin conexion crashearian sobre null: por eso el if)
+    if (m_allocador)
+    {
+        const HRESULT hrC = m_allocador->Commit();
+        LogDiagLinea(L"commit del allocator: hr=0x%08X", hrC);
+        if (FAILED(hrC)) return hrC;
+    }
+
     if (!m_evSalir)
     {
         m_evSalir = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -1719,15 +1917,24 @@ HRESULT LenscordPin::IniciarHilo()
     m_baseQpc = qpc.QuadPart;
     m_tProximoStream = 0;
     m_tengoPrimerFrame = false;
+    m_framesEntregados = 0;
+    m_fallosGetBuf = 0;
+    m_fallosReceive = 0;
     m_runFlag = 1;
+    LogDiagLinea(L"hilo de entrega armado");
 
     HANDLE hilo = CreateThread(nullptr, 0, HiloEntrega, this, 0, nullptr);
-    if (!hilo) { m_runFlag = 0; return E_FAIL; }
+    if (!hilo)
+    {
+        m_runFlag = 0;
+        LogDiagLinea(L"CreateThread fallo: err=%lu", GetLastError());
+        return E_FAIL;
+    }
     m_hilo = hilo;
     return S_OK;
 }
 
-void LenscordPin::PararHilo()
+bool LenscordPin::PararHilo()   // false: quedo zombi (se conserva el handle, no se mata)
 {
     HANDLE hilo = nullptr;
     {
@@ -1736,17 +1943,32 @@ void LenscordPin::PararHilo()
         m_hilo = nullptr;
         m_runFlag = 0;
     }
-    if (!hilo) return;
+    if (!hilo) return true;
     if (m_evSalir) SetEvent(m_evSalir);
-    if (WaitForSingleObject(hilo, 3000) != WAIT_OBJECT_0)
-        TerminateThread(hilo, 0);   // ultimo recurso para no colgar el cierre
-    CloseHandle(hilo);
+    const DWORD espera = WaitForSingleObject(hilo, 3000);
+    if (espera == WAIT_OBJECT_0)
+    {
+        CloseHandle(hilo);
+        if (m_evSalir) ResetEvent(m_evSalir);
+        return true;
+    }
+    // Sin TerminateThread (riesgo de corrupcion de heap en el huesped).
+    // El hilo queda zombi: el handle se conserva para que IniciarHilo no arme
+    // otro encima, y el objeto se conserva vivo (ver ~LenscordFilter).
+    {
+        Guardia g(&m_filtro->m_cs);
+        m_hiloColgado = hilo;
+    }
+    LogDiagLinea(L"hilo de entrega no salio en 3000 ms: zombi conservado, no se mata");
     if (m_evSalir) ResetEvent(m_evSalir);
+    return false;
 }
 
 void LenscordPin::Limpiar()
 {
-    PararHilo();
+    // hilo zombi: el estado queda vivo para que el worker no toque memoria
+    // liberada; el objeto entero se filtra (~LenscordFilter hace return antes)
+    if (!PararHilo()) return;
     if (m_allocador)
     {
         m_allocador->Decommit();
@@ -1777,6 +1999,7 @@ void LenscordPin::BucleEntrega()
 
     // Diagnostico temporal (ver LenscordDiag abajo)
     InterlockedExchange(&g_diag[0], 1);   // hilo armado
+    LogDiagLinea(L"hilo de entrega: inicio");
 
     if (m_frameNV12.size() < static_cast<size_t>(kTamanoFrame))
         m_frameNV12.resize(kTamanoFrame);
@@ -1797,10 +2020,17 @@ void LenscordPin::BucleEntrega()
         QueryPerformanceCounter(&tW1);
         InterlockedExchangeAdd(&g_diag[14], (LONG)((tW1.QuadPart - tW0.QuadPart) * 1000 / frec.QuadPart));  // ms espera externa
         if (espera == WAIT_OBJECT_0)
+        {
+            LogDiagLinea(L"hilo sale: evSalir, frames=%ld", m_framesEntregados);
             break;
+        }
 
         InterlockedIncrement(&g_diag[1]);   // iteraciones
-        if (!m_runFlag) break;
+        if (!m_runFlag)
+        {
+            LogDiagLinea(L"hilo sale: runFlag=0 (Stop/Pause), frames=%ld", m_framesEntregados);
+            break;
+        }
         if (!m_allocador || !m_entrada)
             continue;   // no conectado: mantener el hilo vivo hasta Stop
         InterlockedIncrement(&g_diag[2]);   // conectados (paso del if)
@@ -1815,7 +2045,10 @@ void LenscordPin::BucleEntrega()
             const LONGLONG resto = proximo.QuadPart - ahora.QuadPart;
             const DWORD ms = static_cast<DWORD>((resto * 1000) / frec.QuadPart);
             if (ms > 0 && WaitForSingleObject(m_evSalir, ms) == WAIT_OBJECT_0)
+            {
+                LogDiagLinea(L"hilo sale: evSalir (durante ritmo), frames=%ld", m_framesEntregados);
                 break;
+            }
         }
         else if (proximo.QuadPart < ahora.QuadPart - pasoQpc * 60)
         {
@@ -1847,24 +2080,16 @@ void LenscordPin::BucleEntrega()
         QueryPerformanceCounter(&t1);
         InterlockedExchangeAdd(&g_diag[11], (LONG)((t1.QuadPart - t0.QuadPart) * 1000 / tFrec.QuadPart));   // us CopiarUltimo
 
-        // datos del formato a entregar: manda el ultimo SetFormat (pendiente
-        // tras conectar, orden de libwebrtc); si no, el formato conectado
+        // datos del formato a entregar: Hallazgo 2. Una vez conectado, las
+        // muestras salen SIEMPRE en el formato conectado; un SetFormat
+        // posterior queda pendiente para la siguiente conexion.
         GUID sub;
         int w, h;
         {
             Guardia g(&m_filtro->m_cs);
-            if (m_pendiente)
-            {
-                sub = m_subtipoPendiente;
-                w = m_wPendiente;
-                h = m_hPendiente;
-            }
-            else
-            {
-                sub = m_subtipoConectado;
-                w = m_wConectado;
-                h = m_hConectado;
-            }
+            sub = m_subtipoConectado;
+            w = m_wConectado;
+            h = m_hConectado;
         }
         const int len = BytesDeFormato(sub, w, h);
         if (len <= 0)
@@ -1879,8 +2104,11 @@ void LenscordPin::BucleEntrega()
         {
             InterlockedExchange(&g_diag[3], (LONG)hr);   // ultimo hr de GetBuffer
             InterlockedIncrement(&g_diag[4]);
-            if (hr == VFW_E_NOT_COMMITTED) break;
-            continue;
+            const LONG veces = InterlockedIncrement(&m_fallosGetBuf);
+            if (veces == 1 || veces % 100 == 0)
+                LogDiagLinea(L"getbuf fallo: hr=0x%08X (%s), vez=%ld",
+                    hr, hr == VFW_E_NOT_COMMITTED ? L"VFW_E_NOT_COMMITTED" : L"otro", veces);
+            continue;   // hallazgo 1: no terminar en silencio; el hr queda registrado
         }
         InterlockedIncrement(&g_diag[5]);               // GetBuffer OK
 
@@ -1916,6 +2144,26 @@ void LenscordPin::BucleEntrega()
             InterlockedIncrement(&g_diag[7]);           // Receives
             InterlockedExchangeAdd(&g_diag[8], (LONG)((t4.QuadPart - t0.QuadPart) * 1000 / tFrec.QuadPart));   // us ciclo total
             InterlockedIncrement(&g_diag[13]);
+
+            if (SUCCEEDED(hrR))
+            {
+                const LONG frames = InterlockedIncrement(&m_framesEntregados);
+                if (frames == 1)
+                {
+                    LARGE_INTEGER tF;
+                    QueryPerformanceCounter(&tF);
+                    const LONGLONG primerMs = (tF.QuadPart - m_baseQpc) * 1000 / frec.QuadPart;
+                    LogDiagLinea(L"primer frame: +%lld ms, len=%d, hr=0x%08X", primerMs, len, hrR);
+                }
+                if (frames <= 5 || frames % 300 == 0)
+                    LogDiagLinea(L"frame %ld len=%d hr=0x%08X", frames, len, hrR);
+            }
+            else
+            {
+                const LONG vecesR = InterlockedIncrement(&m_fallosReceive);
+                if (vecesR == 1 || vecesR % 100 == 0)
+                    LogDiagLinea(L"receive fallo: hr=0x%08X, len=%d, vez=%ld", hrR, len, vecesR);
+            }
         }
         sample->Release();
     }
@@ -1964,6 +2212,7 @@ public:
         if (pUnkOuter) return CLASS_E_NOAGGREGATION;
         LenscordFilter* filtro = new (std::nothrow) LenscordFilter();
         if (!filtro) return E_OUTOFMEMORY;
+        LogDiagLinea(L"filtro instanciado (pid=%lu)", GetCurrentProcessId());
         if (!filtro->ElPin())
         {
             delete filtro;

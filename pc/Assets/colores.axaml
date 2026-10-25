@@ -8,6 +8,11 @@
   <SolidColorBrush x:Key="PastelGris"     Color="#E8E8EA" />
   <SolidColorBrush x:Key="PastelLavanda"  Color="#E3E5FA" />
   <SolidColorBrush x:Key="PastelMenta"    Color="#DDF3E8" />
+  <SolidColorBrush x:Key="Blanco" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="RosaTexto" Color="#A32E69" />
+  <SolidColorBrush x:Key="BotonPrincipal" Color="#111111" />
+  <SolidColorBrush x:Key="BotonPrincipalHover" Color="#2A2A2E" />
+  <SolidColorBrush x:Key="BotonPrincipalTexto" Color="#FFFFFF" />
   <SolidColorBrush x:Key="Rosa"           Color="#F24D9D" />
   <SolidColorBrush x:Key="RosaFondo"      Color="#FCE7F3" />
   <SolidColorBrush x:Key="Insignia"       Color="#DADCF7" />
@@ -23,4 +28,34 @@
 
   <x:Double x:Key="RadioTarjeta">20</x:Double>
   <x:Double x:Key="RadioChip">999</x:Double>
+
+  <!-- Estas claves alinean los popups de FluentTheme (dropdown de ComboBox,
+       tooltips, flyouts) con la paleta. SeleccionarTema las reescribe por tema. -->
+  <CornerRadius x:Key="OverlayCornerRadius">14</CornerRadius>
+  <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#E5E5E9" />
+  <SolidColorBrush x:Key="ComboBoxDropDownGlyphForeground" Color="#5C5C63" />
+  <SolidColorBrush x:Key="ComboBoxDropDownGlyphForegroundFocused" Color="#111111" />
+  <SolidColorBrush x:Key="ComboBoxPlaceHolderForeground" Color="#8E8E96" />
+  <SolidColorBrush x:Key="ComboBoxItemForeground" Color="#111111" />
+  <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver" Color="#111111" />
+  <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="#111111" />
+  <SolidColorBrush x:Key="ComboBoxItemBackground" Color="Transparent" />
+  <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#F1F1F2" />
+  <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#F1F1F2" />
+  <SolidColorBrush x:Key="ComboBoxItemBackgroundPressed" Color="#EAEAEC" />
+  <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#EAEAEC" />
+  <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#EAEAEC" />
+  <SolidColorBrush x:Key="ComboBoxItemBorderBrushPointerOver" Color="Transparent" />
+  <SolidColorBrush x:Key="ComboBoxItemBorderBrushPressed" Color="Transparent" />
+  <SolidColorBrush x:Key="ComboBoxItemBorderBrushSelected" Color="Transparent" />
+  <SolidColorBrush x:Key="ComboBoxItemBorderBrushSelectedPointerOver" Color="Transparent" />
+  <SolidColorBrush x:Key="ComboBoxItemBorderBrushSelectedPressed" Color="Transparent" />
+  <SolidColorBrush x:Key="ToolTipBackground" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="ToolTipBorderBrush" Color="#E5E5E9" />
+  <SolidColorBrush x:Key="ToolTipForeground" Color="#111111" />
+  <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#4C5BD4" />
+  <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#E5E5E9" />
+  <SolidColorBrush x:Key="AvisoFondo" Color="#FFF4E6" />
+  <SolidColorBrush x:Key="AvisoTexto" Color="#8A5B12" />
 </ResourceDictionary>

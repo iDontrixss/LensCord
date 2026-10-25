@@ -79,29 +79,33 @@ y borra el dex.
 
 ## Webcam virtual DirectShow
 
-Discord deja de ver la webcam virtual (error 2014 de libwebrtc) porque solo
-enumera filtros DirectShow; la camara MF de `virtualcam/Source/` no alcanza.
-Se agrego `virtualcam/DShow/`: un filtro DirectShow propio (COM a mano,
-estilo UnityCapture, sin Base Classes) que consume los mismos frames del
-telefono (`frames.nv12`, IPC de `pc/Core/VirtualCameraPublisher.cs`) y los
-expone como camara `Lenscord`.
+Discord devuelve error 2014 con el filtro propio. El ultimo log muestra que
+Discord pide I420 640x480 y rechaza cada `ReceiveConnection` con
+`0x8004022A` (`VFW_E_TYPE_NOT_ACCEPTED`), antes de recibir frames.
 
-- Unidad unica `LenscordDShow.cpp` (~1900 lineas) + `LenscordDShow.def`
-  (exports PRIVATE) + `build-dshow.ps1` (vcvarsall x64, `strmiids.lib`,
-  `dmoguids.lib`, `/DEF`).
-- CLSID `{5B1F6468-8F22-4A63-B38C-27357AE6D492}`, instancia `Lenscord` en la
-  categoria `{860BB310-5D01-11d0-BD3B-00A0C911CE86}` via `IFilterMapper2`
-  (REGFILTER2 v2, pin de salida, AMPROPSETID_Pin).
-- Formatos: I420/RGB24/RGB32 x 720p/480p/240p/120p; convierte NV12 con
-  BT.601 nearest-neighbor igual que el source MF (4 us/frame optimizado).
-- Worker interno entrega 30 fps por deadline QPC (`proximo`), pool de
-  samples propio (GetAllocator del sink va a estilo libwebrtc).
-- `install-vcam.ps1`/`uninstall-vcam.ps1` ya registran/quitan la DLL DShow
-  junto a la MF en `C:\Program Files\Lenscord\VirtualCamera\`.
+El DShow propio se conserva como respaldo en `virtualcam/DShow/`, pero
+`build-dshow.ps1` ahora compila el `OutputFilter` DirectShow de OBS adaptado
+para Lenscord. El fork local esta en `third_party/obs-studio` (rama
+`lenscord-virtualcam`) y su lector abre `%ProgramData%\Lenscord\frames.nv12`
+con el mismo protocolo que publica `pc/Core/VirtualCameraPublisher.cs`.
+
+- Identidad del dispositivo: CLSID `{5B1F6468-8F22-4A63-B38C-27357AE6D492}`;
+  nombre `Lenscord Virtual Camera`.
+- Negociacion/formats y entrega de muestras usan el `OutputFilter` de OBS;
+  conversion de frames y temporizado siguen el codigo upstream adaptado.
+- Build x64 `RelWithDebInfo` compilado; el DLL nuevo esta en
+  `virtualcam/payload/Lenscord.VirtualCamera.DShow.dll`.
+- El DLL activo bajo `C:\Program Files\Lenscord\VirtualCamera\` sigue siendo
+  el anterior: Discord (PID 5620 en el log DShow) lo mantiene cargado y el
+  reemplazo falla por archivo en uso. El instalador ahora precomprueba el lock
+  y explica que hay que cerrar Discord antes de reintentar.
+- Falta registrar el DLL nuevo y verificar que Discord deje de mostrar error
+  2014 y reciba video real.
 
 ### Verificado en esta PC (Windows 11, x64)
 
-- Build de la DLL: 0 errores, 0 warnings.
+- Pruebas enumeradas abajo corresponden al filtro propio anterior, no al fork
+  OBS; el reemplazo OBS solo tiene compilacion x64 confirmada por ahora.
 - Prueba de factory: 14/14 (LoadLibrary, 4 exports, IBaseFilter, EnumPins,
   IAMStreamConfig con 12 formatos y caps de 128 bytes, DllCanUnloadNow OK).
 - `regsvr32` exit 0; la categoria enumera `Lenscord` junto a LSVCam/OBS/etc.

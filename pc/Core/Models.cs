@@ -60,6 +60,7 @@ public sealed class EstadoTelefono
     public List<CamaraInfo> Camaras { get; set; } = new();
     public string CamaraActual { get; set; } = "";
     public bool FlashDisponible { get; set; }
+    public bool Torch { get; set; }
     public string TipoZoom { get; set; } = "digital";     // "sensor" (puede ser optico) | "digital"
     public int Ancho { get; set; }
     public int Alto { get; set; }
@@ -67,6 +68,19 @@ public sealed class EstadoTelefono
     public double FpsMedidos { get; set; }
     public bool Pausado { get; set; }
     public bool Activa { get; set; }
+}
+
+public sealed record WifiDispositivoEncontrado(
+    string Nombre,
+    string Ip,
+    string? PuertoConexion,
+    string? PuertoEmparejamiento)
+{
+    public bool TieneConexion => !string.IsNullOrWhiteSpace(PuertoConexion);
+    public bool TieneEmparejamiento => !string.IsNullOrWhiteSpace(PuertoEmparejamiento);
+    public string Resumen => TieneConexion
+        ? $"{Ip}:{PuertoConexion} · listo para conectar"
+        : $"{Ip}:{PuertoEmparejamiento} · requiere emparejamiento";
 }
 
 public sealed record PresetsVideo(int Ancho, int Alto, int Fps);

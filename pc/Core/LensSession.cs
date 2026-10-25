@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -28,6 +30,7 @@ public sealed class LensSession : IAsyncDisposable
     private string _stayOnOriginal = "";
     private string _timeoutOriginal = "";
     private bool _pantallaPreparada;
+    private bool _wifiDirecto;
 
     public string? Serie { get; private set; }
     public bool LimpiezaOk { get; private set; } = true;
@@ -77,47 +80,59 @@ public sealed class LensSession : IAsyncDisposable
     }
 
     // ------------------------------------------------------------ inicio
-    public async Task IniciarAsync(string serie, CancellationToken ct)
+    public async Task IniciarAsync(string serie, CancellationToken ct, bool optimizarWifi = false)
     {
         Serie = serie;
         Activa = false;
         Estado.Activa = false;
+        string? hostWifi = optimizarWifi ? ObtenerHostWifi(serie) : null;
+        _wifiDirecto = hostWifi is not null;
         await PausarSmartFaceAsync(serie, ct).ConfigureAwait(false);
         await PrepararPantallaAsync(serie, ct).ConfigureAwait(false);
-        await _adb.ForwardRemoveAllAsync(serie).ConfigureAwait(false);
+        if (!_wifiDirecto)
+            await _adb.ForwardRemoveAllAsync(serie).ConfigureAwait(false);
 
         await SubirDexAsync(serie, ct).ConfigureAwait(false);
 
-        int puertoVideo = PuertoLocalLibre();
-        int puertoControl = PuertoLocalLibre();
-        if (puertoControl == puertoVideo) puertoControl++;
+        int puertoVideo = _wifiDirecto ? 0 : PuertoLocalLibre();
+        int puertoControl = _wifiDirecto ? 0 : PuertoLocalLibre();
+        if (!_wifiDirecto)
+        {
+            if (puertoControl == puertoVideo) puertoControl++;
+            var fv = await _adb.ForwardAsync(serie, $"tcp:{puertoVideo}", $"tcp:{PuertoVideoDispositivo}").ConfigureAwait(false);
+            var fc = await _adb.ForwardAsync(serie, $"tcp:{puertoControl}", $"tcp:{PuertoControlDispositivo}").ConfigureAwait(false);
+            if (!fv.Ok || !fc.Ok)
+                throw new InvalidOperationException("No se pudieron abrir los tuneles: " + fv.All + " " + fc.All);
+            Log_($"tuneles: video {puertoVideo}, control {puertoControl}");
+        }
+        else
+        {
+            Log_($"Wi-Fi directo: PC -> {hostWifi}; el video no pasa por adb forward.");
+        }
 
-        var fv = await _adb.ForwardAsync(serie, $"tcp:{puertoVideo}", $"tcp:{PuertoVideoDispositivo}").ConfigureAwait(false);
-        var fc = await _adb.ForwardAsync(serie, $"tcp:{puertoControl}", $"tcp:{PuertoControlDispositivo}").ConfigureAwait(false);
-        if (!fv.Ok || !fc.Ok)
-            throw new InvalidOperationException("No se pudieron abrir los tuneles: " + fv.All + " " + fc.All);
-        Log_($"tuneles: video {puertoVideo}, control {puertoControl}");
-
-        // adb forward acepta la conexion local aunque el otro extremo todavia no
-        // escuche; si conectamos antes, el tunel se cierra y el telefono espera
-        // para siempre. Esperamos su aviso "escuchando".
-        var escuchando = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
+        var escuchando = new TaskCompletionSource<(int Video, int Control)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        string perfilVideo = optimizarWifi ? " 640 480 30" : "";
+        string tokenTransporte = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        int puertoVideoDispositivo = _wifiDirecto ? 0 : PuertoVideoDispositivo;
+        int puertoControlDispositivo = _wifiDirecto ? 0 : PuertoControlDispositivo;
+        string hostEscucha = _wifiDirecto ? "0.0.0.0" : "127.0.0.1";
+        string argumentosExtra = $" {hostEscucha} {tokenTransporte}";
         var proceso = _adb.StartShell(new[]
         {
             "-s", serie, "shell",
-            $"CLASSPATH={RutaDex} app_process /data/local/tmp com.lenscord.LenscordDevice {PuertoVideoDispositivo} {PuertoControlDispositivo}"
+            $"CLASSPATH={RutaDex} app_process /data/local/tmp com.lenscord.LenscordDevice {puertoVideoDispositivo} {puertoControlDispositivo}{perfilVideo}{argumentosExtra}"
         }, linea =>
         {
             Log_("celular: " + linea);
-            if (linea.Contains("escuchando")) escuchando.TrySetResult(true);
+            var match = Regex.Match(linea, @"escuchando video=(\d+) control=(\d+)");
+            if (match.Success && int.TryParse(match.Groups[1].Value, out int video) &&
+                int.TryParse(match.Groups[2].Value, out int control) && video > 0 && control > 0)
+                escuchando.TrySetResult((video, control));
             if (linea.Contains("TRANSMITIENDO")) Estado.Activa = true;
         });
         if (proceso is null) throw new InvalidOperationException("No se pudo lanzar app_process en el celular");
         _proceso = proceso;
 
-        // Si el proceso del celular muere (error de camara, kill remoto), la PC
-        // debe enterarse en vez de quedarse diciendo "Transmitiendo" para siempre.
         proceso.EnableRaisingEvents = true;
         proceso.Exited += (_, _) =>
         {
@@ -129,34 +144,113 @@ public sealed class LensSession : IAsyncDisposable
             ProcesoTerminado?.Invoke();
         };
 
+        (int Video, int Control) puertosDispositivo;
         try
         {
-            await escuchando.Task.WaitAsync(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+            puertosDispositivo = await escuchando.Task.WaitAsync(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
             throw new InvalidOperationException("El telefono no abrio los puertos de video/control a tiempo.");
         }
 
-        // El control se conecta primero: ahi llega el inventario real de camaras.
-        _ctrl = new TcpClient();
-        await _ctrl.ConnectAsync("127.0.0.1", puertoControl, ct).ConfigureAwait(false);
+        string hostConexion = _wifiDirecto ? hostWifi! : "127.0.0.1";
+        int puertoControlConexion = _wifiDirecto ? puertosDispositivo.Control : puertoControl;
+        int puertoVideoConexion = _wifiDirecto ? puertosDispositivo.Video : puertoVideo;
+        Log_(_wifiDirecto
+            ? $"puertos directos del celular: video {puertoVideoConexion}, control {puertoControlConexion}"
+            : $"puertos locales reenviados: video {puertoVideoConexion}, control {puertoControlConexion}");
+
+        if (_wifiDirecto)
+        {
+            try
+            {
+                _ctrl = await ConectarAutenticadoAsync(hostConexion, puertoControlConexion, tokenTransporte, ct,
+                    TimeSpan.FromSeconds(4)).ConfigureAwait(false);
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested && e is (SocketException or OperationCanceledException))
+            {
+                Log_("Wi-Fi directo no alcanzable; respaldo por adb forward: " + e.Message);
+                puertoControlConexion = await CrearForwardLocalAsync(serie, puertosDispositivo.Control).ConfigureAwait(false);
+                puertoVideoConexion = await CrearForwardLocalAsync(serie, puertosDispositivo.Video).ConfigureAwait(false);
+                hostConexion = "127.0.0.1";
+                _wifiDirecto = false;
+                _ctrl = await ConectarAutenticadoAsync(hostConexion, puertoControlConexion, tokenTransporte, ct).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            _ctrl = await ConectarAutenticadoAsync(hostConexion, puertoControlConexion, tokenTransporte, ct).ConfigureAwait(false);
+        }
+
         var nsCtrl = _ctrl.GetStream();
         _ctrlWriter = new StreamWriter(nsCtrl, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
         _ = LeerControlAsync(nsCtrl, ct);
 
-        // El video: esperamos a que el telefono acepte la conexion.
-        _video = new TcpClient();
-        using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        if (_wifiDirecto)
         {
-            cts.CancelAfter(TimeSpan.FromSeconds(15));
-            await _video.ConnectAsync("127.0.0.1", puertoVideo, cts.Token).ConfigureAwait(false);
+            try
+            {
+                _video = await ConectarAutenticadoAsync(hostConexion, puertoVideoConexion, tokenTransporte, ct,
+                    TimeSpan.FromSeconds(4)).ConfigureAwait(false);
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested && e is (SocketException or OperationCanceledException))
+            {
+                Log_("Puerto de video directo no alcanzable; se reenvía solo el video por adb: " + e.Message);
+                puertoVideoConexion = await CrearForwardLocalAsync(serie, puertosDispositivo.Video).ConfigureAwait(false);
+                _video = await ConectarAutenticadoAsync("127.0.0.1", puertoVideoConexion, tokenTransporte, ct).ConfigureAwait(false);
+                _wifiDirecto = false;
+            }
         }
+        else
+        {
+            _video = await ConectarAutenticadoAsync(hostConexion, puertoVideoConexion, tokenTransporte, ct).ConfigureAwait(false);
+        }
+
         _videoStream = _video.GetStream();
-        Log_("conexiones de video y control abiertas");
+        Log_(_wifiDirecto ? "video y control directos por Wi-Fi" : "conexiones de video y control abiertas");
 
         Activa = true;
         Estado.Activa = true;
+    }
+
+    private static string? ObtenerHostWifi(string serie)
+    {
+        int separador = serie.LastIndexOf(':');
+        if (separador <= 0) return null;
+        string host = serie[..separador].Trim('[', ']');
+        return IPAddress.TryParse(host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork
+            ? host
+            : null;
+    }
+
+    private async Task<int> CrearForwardLocalAsync(string serie, int puertoDispositivo)
+    {
+        int puertoLocal = PuertoLocalLibre();
+        var forward = await _adb.ForwardAsync(serie, $"tcp:{puertoLocal}", $"tcp:{puertoDispositivo}").ConfigureAwait(false);
+        if (!forward.Ok)
+            throw new InvalidOperationException("No se pudo crear el respaldo ADB: " + forward.All);
+        return puertoLocal;
+    }
+
+    private static async Task<TcpClient> ConectarAutenticadoAsync(
+        string host, int puerto, string token, CancellationToken ct, TimeSpan? timeoutMaximo = null)
+    {
+        var cliente = new TcpClient { NoDelay = true };
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(timeoutMaximo ?? TimeSpan.FromSeconds(15));
+            await cliente.ConnectAsync(host, puerto, timeout.Token).ConfigureAwait(false);
+            byte[] prueba = Encoding.ASCII.GetBytes(token);
+            await cliente.GetStream().WriteAsync(prueba, timeout.Token).ConfigureAwait(false);
+            return cliente;
+        }
+        catch
+        {
+            cliente.Dispose();
+            throw;
+        }
     }
 
     private async Task LeerControlAsync(Stream s, CancellationToken ct)
@@ -190,6 +284,7 @@ public sealed class LensSession : IAsyncDisposable
                     Estado.VersionAndroid = Get(r, "release");
                     Estado.ComoObtuvoContext = Get(r, "ctxHow");
                     Estado.CamaraActual = Get(r, "camera");
+                    Estado.Torch = GetB(r, "torch");
                     Estado.FlashDisponible = GetB(r, "flashAvailable");
                     Estado.TipoZoom = Get(r, "zoomKind");
                     Estado.Ancho = GetI(r, "w");
@@ -206,6 +301,7 @@ public sealed class LensSession : IAsyncDisposable
 
                 case "state":
                     Estado.CamaraActual = Get(r, "camera");
+                    Estado.Torch = GetB(r, "torch");
                     Estado.FlashDisponible = GetB(r, "flashAvailable");
                     Estado.TipoZoom = Get(r, "zoomKind");
                     Estado.Pausado = GetB(r, "paused");
@@ -477,13 +573,16 @@ public sealed class LensSession : IAsyncDisposable
 
             if (Serie is not null)
             {
-                var fw = await _adb.ForwardRemoveAllAsync(Serie).ConfigureAwait(false);
-                if (!fw.Ok)
+                if (!_wifiDirecto)
                 {
-                    var alterno = await TransporteAlternoAsync(Serie).ConfigureAwait(false);
-                    if (alterno is not null) await _adb.ForwardRemoveAllAsync(alterno).ConfigureAwait(false);
-                    await _adb.ForwardRemoveAllGlobalAsync().ConfigureAwait(false);
-                    Log_("tuneles: se limpio la lista global tras fallar el transporte principal.");
+                    var fw = await _adb.ForwardRemoveAllAsync(Serie).ConfigureAwait(false);
+                    if (!fw.Ok)
+                    {
+                        var alterno = await TransporteAlternoAsync(Serie).ConfigureAwait(false);
+                        if (alterno is not null) await _adb.ForwardRemoveAllAsync(alterno).ConfigureAwait(false);
+                        await _adb.ForwardRemoveAllGlobalAsync().ConfigureAwait(false);
+                        Log_("tuneles: se limpio la lista global tras fallar el transporte principal.");
+                    }
                 }
 
                 LimpiezaOk = await LimpiarTelefonoAsync(Serie).ConfigureAwait(false);
@@ -498,6 +597,7 @@ public sealed class LensSession : IAsyncDisposable
         finally
         {
             Serie = null;
+            _wifiDirecto = false;
             _parada.Release();
         }
     }

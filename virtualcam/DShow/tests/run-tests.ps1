@@ -23,7 +23,7 @@ $exe = Join-Path $bin "test-dshow.exe"
 $cmd = "call `"$vcvars`" x64 && cl /nologo /EHsc /std:c++17 /W3" +
     " /Fo`"$obj\\`" /Fe`"$exe`"" +
     " `"$testsDir\test-dshow.cpp`"" +
-    " /link ole32.lib oleaut32.lib strmiids.lib uuid.lib advapi32.lib shell32.lib user32.lib"
+    " /link ole32.lib oleaut32.lib strmiids.lib uuid.lib advapi32.lib shell32.lib user32.lib psapi.lib"
 cmd /s /c $cmd
 if ($LASTEXITCODE -ne 0) { throw "Fallo la compilacion de test-dshow.exe (exit $LASTEXITCODE)." }
 

@@ -1,11 +1,12 @@
-﻿<Window xmlns="https://github.com/avaloniaui"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controles="clr-namespace:Lenscord.Controls"
+        xmlns:svg="clr-namespace:Avalonia.Svg.Skia;assembly=Svg.Controls.Skia.Avalonia"
         x:Class="Lenscord.Views.MainWindow"
         Title="Lenscord" Width="1320" Height="900"
         MinWidth="1040" MinHeight="660"
         WindowStartupLocation="CenterScreen"
-        Background="#ECECEF"
+        Background="{DynamicResource Fondo}"
         FontFamily="Inter">
 
   <Border Classes="fondo">
@@ -15,21 +16,13 @@
         <Grid Grid.Row="0" Margin="26,18,26,8" ColumnDefinitions="Auto,*,Auto">
           <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
             <Border Classes="marca">
-              <Canvas Width="20" Height="20">
-                <Path Data="M4 1 C2.8 1 2 1.8 2 3 L2 11.6 C2 14.7 4.5 17.3 7.7 17.3 L16.8 17.3 C18 17.3 18.8 16.5 18.8 15.3 C18.8 14.1 18 13.3 16.8 13.3 L8.3 13.3 C6.9 13.3 6.1 12.5 6.1 11.1 L6.1 3 C6.1 1.8 5.3 1 4.1 1 Z"
-                      Fill="#15161A" />
-                <Ellipse Canvas.Left="8" Canvas.Top="5.3" Width="5.4" Height="5.4"
-                         Stroke="#15161A" StrokeThickness="0.65" />
-                <Ellipse Canvas.Left="10.95" Canvas.Top="5.75" Width="1.9" Height="1.9"
-                         Fill="#4D9DF5" Stroke="#15161A" StrokeThickness="0.5" />
-              </Canvas>
+              <Image Source="{Binding IconoMarca}" Width="28" Height="28" Stretch="Uniform" />
             </Border>
-            <TextBlock Text="Lenscord" FontWeight="SemiBold" FontSize="14" Foreground="#111111"
+            <TextBlock Text="Lenscord" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource Tinta}"
                        VerticalAlignment="Center" />
-            <Path Data="M9 5l7 7-7 7" Stroke="#A1A1A8" StrokeThickness="1.5"
-                  Fill="Transparent" StrokeLineCap="Round" StrokeJoin="Round"
-                  Width="12" Height="12" Stretch="Uniform" VerticalAlignment="Center" />
-            <TextBlock Text="Espacio de cámara" FontSize="14" Foreground="#707078"
+            <svg:Svg Path="/Assets/Icons/chevron-right.svg" Width="12" Height="12"
+                     VerticalAlignment="Center" />
+            <TextBlock Text="{Binding TituloSeccion}" FontSize="14" Foreground="{DynamicResource TintaSuave}"
                        VerticalAlignment="Center" />
           </StackPanel>
 
@@ -38,19 +31,18 @@
               <TextBlock Text="SEÑAL SIMULADA" />
             </Border>
 
-            <Border Classes="estadoConexion">
+            <Border Classes="estadoConexion" IsVisible="{Binding HayTransporte}">
               <StackPanel Orientation="Horizontal" Spacing="7">
-                <Ellipse Width="6" Height="6" Fill="#F24D9D" VerticalAlignment="Center" />
+                <Ellipse Width="6" Height="6" Fill="{DynamicResource Rosa}" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding TransporteTexto}" FontSize="12" FontWeight="Medium"
-                           Foreground="#A32E69" MaxWidth="210" TextTrimming="CharacterEllipsis" />
+                           Foreground="{DynamicResource RosaTexto}" MaxWidth="210" TextTrimming="CharacterEllipsis" />
               </StackPanel>
             </Border>
 
             <Button Classes="contorno" Click="OnCambiarModo" Padding="14,8"
                     AutomationProperties.Name="Cambiar entre USB y Wi-Fi">
               <StackPanel Orientation="Horizontal" Spacing="7">
-                <Path Data="{Binding IconoModo}" Stroke="#111111" StrokeThickness="1.6"
-                      Fill="Transparent" StrokeLineCap="Round" Width="16" Height="16" Stretch="Uniform" />
+                <svg:Svg Path="{Binding IconoModoSvg}" Width="16" Height="16" />
                 <TextBlock Text="{Binding TextoModo}" />
               </StackPanel>
             </Button>
@@ -59,7 +51,7 @@
                     IsEnabled="{Binding PuedeIniciar}" IsVisible="{Binding MostrarIniciar}"
                     AutomationProperties.Name="Iniciar cámara">
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Path Data="M8 5l11 7-11 7z" Width="12" Height="12" Stretch="Uniform" />
+                <svg:Svg Path="/Assets/Icons/play.svg" Width="14" Height="14" />
                 <TextBlock Text="Iniciar cámara" />
               </StackPanel>
             </Button>
@@ -67,50 +59,54 @@
             <Button Classes="pildoraPrincipal" Click="OnDetener" IsVisible="{Binding MostrarDetener}"
                     AutomationProperties.Name="Detener cámara">
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Border Width="9" Height="9" Background="White" CornerRadius="2" />
+                <svg:Svg Path="/Assets/Icons/stop.svg" Width="12" Height="12" />
                 <TextBlock Text="Detener" />
               </StackPanel>
+            </Button>
+            <Button Classes="icono" Click="OnConfiguracion" ToolTip.Tip="Configuración"
+                    AutomationProperties.Name="Abrir configuración">
+              <svg:Svg Path="/Assets/Icons/settings.svg" Width="18" Height="18" />
             </Button>
           </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="22,0,22,0">
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="22,0,22,0" IsVisible="{Binding MostrarPanelCamara}">
           <Border Classes="barraFlotante" VerticalAlignment="Center" Margin="0,8,0,8">
             <StackPanel Spacing="4">
               <Button Classes="icono" Click="OnZoomMas" ToolTip.Tip="Acercar"
                       AutomationProperties.Name="Acercar zoom">
-                <Path Data="M12 5v14 M5 12h14" StrokeLineCap="Round" />
+                <svg:Svg Path="/Assets/Icons/zoom-in.svg" Width="22" Height="22" />
               </Button>
               <Button Classes="icono" Click="OnZoomMenos" ToolTip.Tip="Alejar"
                       AutomationProperties.Name="Alejar zoom">
-                <Path Data="M5 12h14" StrokeLineCap="Round" />
+                <svg:Svg Path="/Assets/Icons/zoom-out.svg" Width="22" Height="22" />
               </Button>
               <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
-              <Button Classes="icono" Click="OnFlash" ToolTip.Tip="Flash"
-                      IsEnabled="{Binding TorchPosible}" AutomationProperties.Name="Activar flash">
-                <Path Data="M13 2 L5 13 h5 l-1 9 l8-11 h-5 z" />
+              <Button Classes="icono" Click="OnFlash" ToolTip.Tip="{Binding FlashTooltip}"
+                      IsEnabled="{Binding TorchPosible}" AutomationProperties.Name="{Binding FlashTooltip}">
+                <svg:Svg Path="{Binding FlashIconSvg}" Width="22" Height="22" />
               </Button>
               <Button Classes="icono" Click="OnEspejo" ToolTip.Tip="Espejo horizontal"
                       AutomationProperties.Name="Espejo horizontal">
-                <Path Data="M12 3v18 M3 8l9-4 9 4-9 4z M3 16l9 4 9-4" />
+                <svg:Svg Path="/Assets/Icons/mirror.svg" Width="22" Height="22" />
               </Button>
               <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
               <Button Classes="icono" Click="OnPausa" ToolTip.Tip="Pausar o reanudar"
                       AutomationProperties.Name="Pausar o reanudar">
-                <Path Data="M9 5v14 M15 5v14" StrokeLineCap="Round" />
+                <svg:Svg Path="/Assets/Icons/pause.svg" Width="22" Height="22" />
               </Button>
               <Button Classes="icono" Click="OnCamara" ToolTip.Tip="Cambiar de cámara"
                       AutomationProperties.Name="Cambiar de cámara">
-                <Path Data="M4 8h4l2-3h4l2 3h4v11H4z" />
+                <svg:Svg Path="/Assets/Icons/camera-switch.svg" Width="22" Height="22" />
               </Button>
               <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
               <Button Classes="icono" Click="OnRotar" ToolTip.Tip="Rotar 90 grados"
                       AutomationProperties.Name="Rotar 90 grados">
-                <Path Data="M20 12a8 8 0 1 1-2.3-5.6 M20 3v5h-5" StrokeLineCap="Round" />
+                <svg:Svg Path="/Assets/Icons/rotate.svg" Width="22" Height="22" />
               </Button>
               <Button Classes="icono" Click="OnRecorte" ToolTip.Tip="Cambiar recorte"
                       AutomationProperties.Name="Cambiar recorte">
-                <Path Data="M6 2v16h16 M2 6h16v16" StrokeLineCap="Round" />
+                <svg:Svg Path="/Assets/Icons/crop.svg" Width="22" Height="22" />
               </Button>
             </StackPanel>
           </Border>
@@ -131,7 +127,7 @@
 
                   <Border Classes="avisoPeligro" IsVisible="{Binding EsPeligro}"
                           HorizontalAlignment="Center" MaxWidth="680">
-                    <TextBlock Text="{Binding EstadoAccion}" Foreground="#A32E69" FontSize="12"
+                    <TextBlock Text="{Binding EstadoAccion}" Foreground="{DynamicResource RosaTexto}" FontSize="12"
                                TextWrapping="Wrap" TextAlignment="Center" />
                   </Border>
 
@@ -161,8 +157,7 @@
                     <Button Classes="pildora" Click="OnPausa" IsEnabled="{Binding Transmitiendo}"
                             AutomationProperties.Name="Pausar o reanudar">
                       <StackPanel Orientation="Horizontal" Spacing="7">
-                        <Path Data="M9 5v14 M15 5v14" Stroke="#111111" StrokeThickness="1.8"
-                              StrokeLineCap="Round" Width="13" Height="13" Stretch="Uniform" />
+                        <svg:Svg Path="/Assets/Icons/pause.svg" Width="15" Height="15" />
                         <TextBlock Text="Pausar" />
                       </StackPanel>
                     </Button>
@@ -180,9 +175,7 @@
                     <Border Classes="tarjeta" Grid.Column="0">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#E8E8EA">
-                          <Path Data="M4 9a12 12 0 0 1 16 0 M7 13a8 8 0 0 1 10 0 M10 17a4 4 0 0 1 4 0"
-                                Stroke="#5C5C63" StrokeThickness="1.6" Fill="Transparent"
-                                StrokeLineCap="Round" Width="21" Height="21" Stretch="Uniform" />
+                          <svg:Svg Path="/Assets/Icons/wifi.svg" Width="21" Height="21" />
                         </Border>
                         <TextBlock Classes="tituloTarjeta" Text="Conexión" />
                         <TextBlock Classes="descripcionTarjeta" Text="{Binding TransporteTexto}" />
@@ -192,8 +185,7 @@
                     <Border Classes="tarjeta" Grid.Column="1">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#E3E5FA">
-                          <Path Data="M4 8h4l2-3h4l2 3h4v11H4z" Stroke="#4C5BD4" StrokeThickness="1.6"
-                                Fill="Transparent" Width="21" Height="21" Stretch="Uniform" />
+                          <svg:Svg Path="/Assets/Icons/camera.svg" Width="21" Height="21" />
                         </Border>
                         <TextBlock Classes="tituloTarjeta" Text="Lente" />
                         <TextBlock Classes="descripcionTarjeta" Text="{Binding LenteTexto}" />
@@ -203,9 +195,7 @@
                     <Border Classes="tarjeta" Grid.Column="2">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#DDF3E8">
-                          <Path Data="M4 8h4l2-3h4l2 3h4v11H4z M9 13a3 3 0 1 0 6 0a3 3 0 0 0-6 0"
-                                Stroke="#1E9E63" StrokeThickness="1.6" Fill="Transparent"
-                                Width="21" Height="21" Stretch="Uniform" />
+                          <svg:Svg Path="/Assets/Icons/image.svg" Width="21" Height="21" />
                         </Border>
                         <TextBlock Classes="tituloTarjeta" Text="Imagen" />
                         <TextBlock Classes="descripcionTarjeta"
@@ -216,22 +206,16 @@
                     <Border Classes="tarjeta" Grid.Column="3">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#F5E7F0">
-                          <Path Data="M4 7h16v13H4z M8 7l2-3h4l2 3 M9 13a3 3 0 1 0 6 0a3 3 0 0 0-6 0"
-                                Stroke="#B02A70" StrokeThickness="1.6" Fill="Transparent"
-                                Width="21" Height="21" Stretch="Uniform" />
+                          <svg:Svg Path="/Assets/Icons/camera.svg" Width="21" Height="21" />
                         </Border>
                         <TextBlock Classes="tituloTarjeta" Text="Captura" />
-                        <TextBlock Classes="descripcionTarjeta"
-                                   Text="Pausa y revisa la imagen antes de continuar." />
                       </StackPanel>
                     </Border>
 
                     <Border Classes="tarjeta" Grid.Column="4">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#E8E8EA">
-                          <Path Data="M3 12a9 9 0 0 1 18 0 M8 20h8" Stroke="#5C5C63" StrokeThickness="1.6"
-                                Fill="Transparent" StrokeLineCap="Round"
-                                Width="21" Height="21" Stretch="Uniform" />
+                          <svg:Svg Path="/Assets/Icons/output.svg" Width="21" Height="21" />
                         </Border>
                         <TextBlock Classes="tituloTarjeta" Text="Salida" />
                         <TextBlock Classes="descripcionTarjeta"
@@ -240,108 +224,292 @@
                     </Border>
                   </Grid>
 
-                  <Expander Header="Ajustes de captura" IsExpanded="False"
-                            HorizontalContentAlignment="Stretch">
-                    <Border Classes="tarjeta" Margin="0,8,0,0">
-                      <StackPanel Spacing="12">
-                        <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                          <StackPanel Grid.Column="0" Spacing="4">
-                            <TextBlock Classes="etiqueta" Text="Cámara" />
-                            <ComboBox ItemsSource="{Binding Camaras}" SelectedItem="{Binding Camara}"
-                                      HorizontalAlignment="Stretch">
-                              <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                  <TextBlock Text="{Binding Nombre}" />
-                                </DataTemplate>
-                              </ComboBox.ItemTemplate>
-                            </ComboBox>
-                          </StackPanel>
-                          <StackPanel Grid.Column="1" Spacing="4">
-                            <TextBlock Classes="etiqueta" Text="Resolución y cadencia" />
-                            <ComboBox ItemsSource="{Binding Resoluciones}"
-                                      SelectedItem="{Binding ResolucionSeleccionada}"
-                                      SelectionChanged="OnResolucion"
-                                      HorizontalAlignment="Stretch">
-                              <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                  <TextBlock Text="{Binding Texto}" />
-                                </DataTemplate>
-                              </ComboBox.ItemTemplate>
-                            </ComboBox>
-                          </StackPanel>
-                        </Grid>
-                        <TextBlock Classes="descripcionTarjeta"
-                                   Text="{Binding TipoZoom, StringFormat='Tipo de zoom: {0}'}" />
-                      </StackPanel>
-                    </Border>
-                  </Expander>
-
-                  <Expander Header="Conexión Wi-Fi" IsExpanded="False"
-                            IsVisible="{Binding MostrarPanelWifi}" HorizontalContentAlignment="Stretch">
-                    <Border Classes="tarjeta" Margin="0,8,0,0">
-                      <StackPanel Spacing="12">
-                        <TextBlock Classes="descripcionTarjeta"
-                                   Text="Activa Depuración inalámbrica y usa Detectar Wi-Fi. El puerto de conexión cambia en cada sesión; el de emparejamiento no es el mismo." />
-                        <Grid ColumnDefinitions="2*,*,*" ColumnSpacing="10">
-                          <StackPanel Grid.Column="0" Spacing="4">
-                            <TextBlock Classes="etiqueta" Text="IP del celular" />
-                            <TextBox Text="{Binding WifiIp}" Watermark="192.168.1.50" />
-                          </StackPanel>
-                          <StackPanel Grid.Column="1" Spacing="4">
-                            <TextBlock Classes="etiqueta" Text="Puerto de emparejamiento" />
-                            <TextBox Text="{Binding WifiPuerto}" Watermark="37123" />
-                          </StackPanel>
-                          <StackPanel Grid.Column="2" Spacing="4">
-                            <TextBlock Classes="etiqueta" Text="Código de 6 dígitos" />
-                            <TextBox Text="{Binding WifiCodigo}" Watermark="123456" MaxLength="6" />
-                          </StackPanel>
-                        </Grid>
-                        <WrapPanel Orientation="Horizontal">
-                          <Button Classes="pildora" Click="OnDetectarWifi" Margin="0,0,8,8">
-                            <TextBlock Text="Detectar Wi-Fi" />
-                          </Button>
-                          <Button Classes="pildora" Click="OnEmparejar" Margin="0,0,8,8">
-                            <TextBlock Text="Emparejar" />
-                          </Button>
-                          <Button Classes="pildora" Click="OnConectarWifi" Margin="0,0,8,8">
-                            <TextBlock Text="Conectar" />
-                          </Button>
-                          <Button Classes="pildora" Click="OnActivarWifi" Margin="0,0,8,8">
-                            <TextBlock Text="Activar por USB" />
-                          </Button>
-                          <Button Classes="pildora" Click="OnVolverUsb" Margin="0,0,8,8">
-                            <TextBlock Text="Volver a USB" />
-                          </Button>
-                        </WrapPanel>
-                        <TextBlock Classes="descripcionTarjeta" Text="{Binding WifiEstado}" />
-                        <Border Background="#FFF4E6" CornerRadius="14" Padding="12">
-                          <TextBlock Foreground="#8A5B12" FontSize="12" TextWrapping="Wrap"
-                                     Text="ADB por Wi-Fi deja el celular accesible desde la red. Vuelve a USB al terminar. La pantalla se mantiene encendida durante la sesión." />
+                  <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                    <ToggleButton x:Name="FichaCaptura" Classes="panelFicha" Click="OnPanelFicha"
+                                  AutomationProperties.Name="Abrir ajustes de captura">
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                        <Border Classes="baldosa" Background="{DynamicResource PastelLavanda}">
+                          <svg:Svg Path="/Assets/Icons/camera.svg" Width="19" Height="19" />
                         </Border>
-                      </StackPanel>
-                    </Border>
-                  </Expander>
+                        <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                          <TextBlock Classes="tituloTarjeta" Text="Ajustes de captura" />
+                          <TextBlock Classes="descripcionTarjeta" Text="Cámara, resolución y cadencia." />
+                        </StackPanel>
+                        <svg:Svg Grid.Column="2" Classes="chevronFicha" Path="/Assets/Icons/chevron-right.svg"
+                                 Width="15" Height="15" VerticalAlignment="Center" />
+                      </Grid>
+                    </ToggleButton>
+                    <ToggleButton x:Name="FichaWifi" Classes="panelFicha" Click="OnPanelFicha"
+                                  IsVisible="{Binding MostrarPanelWifi}"
+                                  AutomationProperties.Name="Abrir conexión Wi-Fi">
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                        <Border Classes="baldosa" Background="{DynamicResource RosaFondo}">
+                          <svg:Svg Path="/Assets/Icons/wifi.svg" Width="19" Height="19" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                          <TextBlock Classes="tituloTarjeta" Text="Conexión Wi-Fi" />
+                          <TextBlock Classes="descripcionTarjeta" Text="Buscar, emparejar y conectar el teléfono." />
+                        </StackPanel>
+                        <svg:Svg Grid.Column="2" Classes="chevronFicha" Path="/Assets/Icons/chevron-right.svg"
+                                 Width="15" Height="15" VerticalAlignment="Center" />
+                      </Grid>
+                    </ToggleButton>
+                    <ToggleButton x:Name="FichaRegistro" Classes="panelFicha" Click="OnPanelFicha"
+                                  AutomationProperties.Name="Abrir registro">
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                        <Border Classes="baldosa" Background="{DynamicResource PastelGris}">
+                          <svg:Svg Path="/Assets/Icons/output.svg" Width="19" Height="19" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                          <TextBlock Classes="tituloTarjeta" Text="Registro" />
+                          <TextBlock Classes="descripcionTarjeta" Text="Diagnóstico de la sesión actual." />
+                        </StackPanel>
+                        <svg:Svg Grid.Column="2" Classes="chevronFicha" Path="/Assets/Icons/chevron-right.svg"
+                                 Width="15" Height="15" VerticalAlignment="Center" />
+                      </Grid>
+                    </ToggleButton>
+                  </StackPanel>
 
-                  <Expander Header="Registro" IsExpanded="False" HorizontalContentAlignment="Stretch">
-                    <Border Background="#151517" CornerRadius="18" Padding="14" Margin="0,8,0,0">
-                      <ScrollViewer Height="150" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding Registro}">
-                          <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                              <TextBlock Text="{Binding}" FontFamily="Cascadia Mono, Consolas, monospace"
-                                         FontSize="11" Foreground="#CFCFD6" TextWrapping="Wrap" />
-                            </DataTemplate>
-                          </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                      </ScrollViewer>
-                    </Border>
-                  </Expander>
+                  <Border x:Name="PanelCapturaContenido" Classes="tarjeta" IsVisible="False">
+                    <StackPanel Spacing="12">
+                      <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <StackPanel Grid.Column="0" Spacing="4">
+                          <TextBlock Classes="etiqueta" Text="Cámara" />
+                          <ComboBox ItemsSource="{Binding Camaras}" SelectedItem="{Binding Camara}"
+                                    HorizontalAlignment="Stretch">
+                            <ComboBox.ItemTemplate>
+                              <DataTemplate>
+                                <TextBlock Text="{Binding Nombre}" />
+                              </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                          </ComboBox>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                          <TextBlock Classes="etiqueta" Text="Resolución y cadencia" />
+                          <ComboBox ItemsSource="{Binding Resoluciones}"
+                                    SelectedItem="{Binding ResolucionSeleccionada}"
+                                    SelectionChanged="OnResolucion"
+                                    HorizontalAlignment="Stretch">
+                            <ComboBox.ItemTemplate>
+                              <DataTemplate>
+                                <TextBlock Text="{Binding Texto}" />
+                              </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                          </ComboBox>
+                        </StackPanel>
+                      </Grid>
+                      <TextBlock Classes="descripcionTarjeta"
+                                 Text="{Binding TipoZoom, StringFormat='Tipo de zoom: {0}'}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border x:Name="PanelWifiContenido" Classes="tarjeta" IsVisible="False">
+                    <StackPanel Spacing="12">
+                      <Button Classes="pildora" Click="OnDetectarWifi" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <svg:Svg Path="/Assets/Icons/wifi.svg" Width="17" Height="17" />
+                          <TextBlock Text="Buscar dispositivos" />
+                        </StackPanel>
+                      </Button>
+
+                      <ItemsControl ItemsSource="{Binding WifiDispositivos}"
+                                    IsVisible="{Binding HayDispositivosWifi}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <Border Classes="tarjeta" Padding="12" Margin="0,0,0,8" Background="{DynamicResource TarjetaHover}">
+                              <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <StackPanel Spacing="3" VerticalAlignment="Center">
+                                  <TextBlock Text="{Binding Nombre}" FontWeight="SemiBold"
+                                             Foreground="{DynamicResource Tinta}" />
+                                  <TextBlock Text="{Binding Resumen}" Classes="descripcionTarjeta" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Classes="pildora" Click="OnEmparejarDispositivoWifi"
+                                        IsVisible="{Binding TieneEmparejamiento}">
+                                  <TextBlock Text="Emparejar" />
+                                </Button>
+                                <Button Grid.Column="2" Classes="pildoraPrincipal" Click="OnConectarDispositivoWifi"
+                                        IsEnabled="{Binding TieneConexion}">
+                                  <TextBlock Text="Conectar" />
+                                </Button>
+                              </Grid>
+                            </Border>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+
+                      <StackPanel Spacing="4" MaxWidth="260" HorizontalAlignment="Left">
+                        <TextBlock Classes="etiqueta" Text="Código de emparejamiento del teléfono" />
+                        <TextBox Text="{Binding WifiCodigo}" Watermark="6 dígitos" MaxLength="6" />
+                      </StackPanel>
+
+                      <Expander Classes="panelDesplegable compacto" Header="Conectar manualmente con IP"
+                                IsExpanded="False" HorizontalContentAlignment="Stretch">
+                        <StackPanel Spacing="10" Margin="0,8,0,0">
+                          <Grid ColumnDefinitions="2*,*,*" ColumnSpacing="10">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                              <TextBlock Classes="etiqueta" Text="IP del celular" />
+                              <TextBox Text="{Binding WifiIp}" Watermark="192.168.1.50" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                              <TextBlock Classes="etiqueta" Text="Puerto de conexión" />
+                              <TextBox Text="{Binding WifiPuerto}" Watermark="5555" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                              <TextBlock Classes="etiqueta" Text="Puerto de emparejamiento" />
+                              <TextBox Text="{Binding WifiPuertoEmparejamiento}" Watermark="37123" />
+                            </StackPanel>
+                          </Grid>
+                          <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Classes="pildora" Click="OnEmparejar">
+                              <TextBlock Text="Emparejar por IP" />
+                            </Button>
+                            <Button Classes="pildoraPrincipal" Click="OnConectarWifi">
+                              <TextBlock Text="Conectar por IP" />
+                            </Button>
+                          </StackPanel>
+                        </StackPanel>
+                      </Expander>
+
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Classes="pildora" Click="OnActivarWifi">
+                          <TextBlock Text="Activar Wi-Fi por USB" />
+                        </Button>
+                        <Button Classes="pildora" Click="OnVolverUsb">
+                          <TextBlock Text="Volver a USB" />
+                        </Button>
+                      </StackPanel>
+                      <TextBlock Classes="descripcionTarjeta" Text="{Binding WifiEstado}" />
+                    </StackPanel>
+                  </Border>
+
+                  <Border x:Name="PanelRegistroContenido" Background="#151517" CornerRadius="18" Padding="14"
+                          IsVisible="False">
+                    <ScrollViewer Height="150" VerticalScrollBarVisibility="Auto">
+                      <ItemsControl ItemsSource="{Binding Registro}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding}" FontFamily="Cascadia Mono, Consolas, monospace"
+                                       FontSize="11" Foreground="#CFCFD6" TextWrapping="Wrap" />
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </ScrollViewer>
+                  </Border>
                 </StackPanel>
               </ScrollViewer>
             </Panel>
           </Border>
         </Grid>
 
+        <Grid Grid.Row="1" Margin="22,0,22,0" IsVisible="{Binding MostrarPanelConfiguracion}">
+          <Border Classes="lienzo">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel MaxWidth="1080" HorizontalAlignment="Center" Margin="40,28,40,32" Spacing="18">
+                <StackPanel Spacing="6">
+                  <TextBlock Classes="titular" Text="Configuración" FontSize="32" />
+                </StackPanel>
+                <Grid ColumnDefinitions="210,*" ColumnSpacing="16">
+                  <StackPanel Grid.Column="0" Spacing="12">
+                    <Border Classes="tarjeta" Padding="12">
+                      <StackPanel Spacing="8">
+                        <TextBlock Classes="etiqueta" Text="PREFERENCIAS" Margin="8,2,0,4" />
+                        <Border Background="{DynamicResource TarjetaHover}" CornerRadius="12" Padding="11,10">
+                          <StackPanel Orientation="Horizontal" Spacing="9">
+                            <svg:Svg Path="/Assets/Icons/image.svg" Width="17" Height="17" />
+                            <TextBlock Text="Apariencia" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" />
+                          </StackPanel>
+                        </Border>
+                        <Border Classes="chip" Padding="11,10">
+                          <StackPanel Orientation="Horizontal" Spacing="9">
+                            <svg:Svg Path="{Binding IconoModoSvg}" Width="17" Height="17" />
+                            <TextBlock Text="Cámara y conexión" Foreground="{DynamicResource TintaSuave}" />
+                          </StackPanel>
+                        </Border>
+                      </StackPanel>
+                    </Border>
+                    <Border Classes="tarjeta" Padding="14">
+                      <StackPanel Spacing="7">
+                        <TextBlock Classes="etiqueta" Text="SESIÓN ACTUAL" />
+                        <TextBlock Text="{Binding EstadoTexto}" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" TextWrapping="Wrap" />
+                        <TextBlock Classes="descripcionTarjeta" Text="{Binding TransporteTexto}" />
+                        <TextBlock Classes="descripcionTarjeta" Text="{Binding LenteTexto}" />
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="14">
+                    <Border Classes="tarjeta" Padding="20">
+                      <StackPanel Spacing="14">
+                        <StackPanel Spacing="5">
+                          <TextBlock Classes="tituloTarjeta" Text="Apariencia" FontSize="20" />
+                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding Temas}">
+                          <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                          </ItemsControl.ItemsPanel>
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                              <Button Width="148" Margin="0,0,10,10" Padding="7" Background="{DynamicResource Marco}"
+                                      BorderBrush="{Binding ColorBorde}" BorderThickness="1.5" CornerRadius="15"
+                                      Click="OnSeleccionarTema" AutomationProperties.Name="Elegir tema">
+                                <StackPanel Spacing="9">
+                                  <Border Height="78" Background="{Binding BrochaFondo}" CornerRadius="10" Padding="8">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7">
+                                      <Border Background="{Binding BrochaSuperficie}" CornerRadius="6" Width="38" />
+                                      <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                                        <Border Background="{Binding BrochaSuperficie}" Height="10" CornerRadius="5" />
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                          <Ellipse Width="8" Height="8" Fill="{Binding BrochaAcento}" />
+                                          <Border Background="{Binding BrochaSuperficie}" Width="48" Height="7" CornerRadius="4" />
+                                        </StackPanel>
+                                      </StackPanel>
+                                    </Grid>
+                                  </Border>
+                                  <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Spacing="2">
+                                      <TextBlock Text="{Binding Nombre}" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" />
+                                      <TextBlock Text="{Binding Descripcion}" FontSize="10" Foreground="{DynamicResource TintaTenue}" />
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Classes="chip" Padding="6,3" IsVisible="{Binding Seleccionado}">
+                                      <TextBlock Text="Activo" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                                    </Border>
+                                  </Grid>
+                                </StackPanel>
+                              </Button>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </StackPanel>
+                    </Border>
+                    <Border Classes="tarjeta" Padding="20">
+                      <StackPanel Spacing="12">
+                        <StackPanel Spacing="4">
+                          <TextBlock Classes="tituloTarjeta" Text="Cámara y conexión" FontSize="18" />
+                        </StackPanel>
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                          <StackPanel Spacing="5">
+                            <TextBlock Text="{Binding Modelo}" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" />
+                            <TextBlock Classes="descripcionTarjeta" Text="{Binding EstadoAccion}" />
+                          </StackPanel>
+                          <Button Grid.Column="1" Classes="pildora" Click="OnCambiarModo">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                              <svg:Svg Path="{Binding IconoModoSvg}" Width="16" Height="16" />
+                              <TextBlock Text="Cambiar transporte" />
+                            </StackPanel>
+                          </Button>
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+                    <Border Classes="tarjeta" Padding="20">
+                      <StackPanel Spacing="5">
+                        <TextBlock Classes="tituloTarjeta" Text="Salida virtual" FontSize="18" />
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
+        </Grid>
         <Grid Grid.Row="2" Margin="26,8,26,18" ColumnDefinitions="*,Auto">
           <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
             <Border Classes="chip">
@@ -352,6 +520,9 @@
             </Border>
             <Border Classes="chip">
               <TextBlock Classes="chipTexto" Text="{Binding FpsTexto}" />
+            </Border>
+            <Border Classes="chip">
+              <TextBlock Classes="chipTexto" Text="{Binding ResolucionTexto}" />
             </Border>
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">

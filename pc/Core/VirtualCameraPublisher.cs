@@ -15,10 +15,14 @@ public sealed class VirtualCameraPublisher : IDisposable
     private const int Cabecera = 4096;
     private const int TamanoFrame = Ancho * Alto * 3 / 2;
     private const uint Magia = 0x46534E4C; // "LNSF"
+    private static readonly ParallelOptions OpcionesConversor = new()
+    {
+        // Deja un nucleo libre para ffmpeg, la interfaz y el resto del sistema.
+        MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount - 1, 1, 4)
+    };
 
     private readonly object _candado = new();
     private readonly AutoResetEvent _aviso = new(false);
-    private readonly byte[] _escalado = new byte[Ancho * Alto * 4];
     private readonly byte[] _nv12 = new byte[TamanoFrame];
 
     private MemoryMappedFile? _mapa;
@@ -111,8 +115,7 @@ public sealed class VirtualCameraPublisher : IDisposable
         if (frame.Width <= 0 || frame.Height <= 0 || frame.Bgra.Length < frame.Width * frame.Height * 4)
             return;
 
-        Escalar(frame);
-        ConvertirNV12();
+        ConvertirNV12(frame);
 
         _slot ^= 1;
         var destino = Cabecera + _slot * TamanoFrame;
@@ -122,7 +125,7 @@ public sealed class VirtualCameraPublisher : IDisposable
         vista.Write(24, ++_secuencia);
     }
 
-    private void Escalar(Frame frame)
+    private void ConvertirNV12(Frame frame)
     {
         int w = frame.Width, h = frame.Height;
         double escala = Math.Min((double)Ancho / w, (double)Alto / h);
@@ -130,58 +133,66 @@ public sealed class VirtualCameraPublisher : IDisposable
         int dh = Math.Max(1, (int)Math.Round(h * escala));
         int ox = (Ancho - dw) / 2;
         int oy = (Alto - dh) / 2;
-
-        Array.Clear(_escalado);
-        var origen = frame.Bgra;
-        for (int y = 0; y < dh; y++)
-        {
-            int sy = y * h / dh;
-            int filaOrigen = sy * w * 4;
-            int filaDestino = ((y + oy) * Ancho + ox) * 4;
-            for (int x = 0; x < dw; x++)
-            {
-                int sx = x * w / dw;
-                int si = filaOrigen + sx * 4;
-                int di = filaDestino + x * 4;
-                _escalado[di] = origen[si];
-                _escalado[di + 1] = origen[si + 1];
-                _escalado[di + 2] = origen[si + 2];
-            }
-        }
-    }
-
-    private void ConvertirNV12()
-    {
         int yPlano = Ancho * Alto;
-        for (int y = 0; y < Alto; y++)
+        var origen = frame.Bgra;
+
+        // Antes se escalaba a otro BGRA de 3.7 MB y se recorria de nuevo entero
+        // para convertirlo. Escribe NV12 directamente desde el frame y reparte
+        // filas independientes entre nucleos; el consumidor sigue leyendo un
+        // frame completo del mismo formato compartido.
+        Array.Fill(_nv12, (byte)16, 0, yPlano);
+        Array.Fill(_nv12, (byte)128, yPlano, _nv12.Length - yPlano);
+
+        Parallel.For(0, Alto, OpcionesConversor, y =>
         {
-            int fila = y * Ancho;
-            for (int x = 0; x < Ancho; x++)
+            if (y < oy || y >= oy + dh) return;
+            int sy = (y - oy) * h / dh;
+            int filaOrigen = sy * w * 4;
+            int filaY = y * Ancho;
+            for (int x = ox; x < ox + dw; x++)
             {
-                int i = (fila + x) * 4;
-                int b = _escalado[i], g = _escalado[i + 1], r = _escalado[i + 2];
-                _nv12[fila + x] = (byte)Math.Clamp(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16, 0, 255);
+                int sx = (x - ox) * w / dw;
+                int i = filaOrigen + sx * 4;
+                int b = origen[i], g = origen[i + 1], r = origen[i + 2];
+                _nv12[filaY + x] = (byte)Math.Clamp(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16, 0, 255);
             }
-        }
+        });
 
         int uv = yPlano;
-        for (int y = 0; y < Alto; y += 2)
+        Parallel.For(0, Alto / 2, OpcionesConversor, fila =>
         {
-            int fila = y * Ancho;
-            int filaUV = (y / 2) * Ancho;
+            int y0 = fila * 2;
+            int filaUV = fila * Ancho;
             for (int x = 0; x < Ancho; x += 2)
             {
-                int i0 = (fila + x) * 4;
-                int i1 = i0 + 4;
-                int i2 = i0 + Ancho * 4;
-                int i3 = i2 + 4;
-                int r = (_escalado[i0 + 2] + _escalado[i1 + 2] + _escalado[i2 + 2] + _escalado[i3 + 2]) / 4;
-                int g = (_escalado[i0 + 1] + _escalado[i1 + 1] + _escalado[i2 + 1] + _escalado[i3 + 1]) / 4;
-                int b = (_escalado[i0] + _escalado[i1] + _escalado[i2] + _escalado[i3]) / 4;
+                LeerPixel(origen, w, h, dw, dh, ox, oy, x, y0, out int r0, out int g0, out int b0);
+                LeerPixel(origen, w, h, dw, dh, ox, oy, x + 1, y0, out int r1, out int g1, out int b1);
+                LeerPixel(origen, w, h, dw, dh, ox, oy, x, y0 + 1, out int r2, out int g2, out int b2);
+                LeerPixel(origen, w, h, dw, dh, ox, oy, x + 1, y0 + 1, out int r3, out int g3, out int b3);
+                int r = (r0 + r1 + r2 + r3) / 4;
+                int g = (g0 + g1 + g2 + g3) / 4;
+                int b = (b0 + b1 + b2 + b3) / 4;
                 _nv12[uv + filaUV + x] = (byte)Math.Clamp(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128, 0, 255);
                 _nv12[uv + filaUV + x + 1] = (byte)Math.Clamp(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128, 0, 255);
             }
+        });
+    }
+
+    private static void LeerPixel(byte[] bgra, int w, int h, int dw, int dh, int ox, int oy,
+        int x, int y, out int r, out int g, out int b)
+    {
+        if (x < ox || x >= ox + dw || y < oy || y >= oy + dh)
+        {
+            r = g = b = 0;
+            return;
         }
+
+        int sx = (x - ox) * w / dw;
+        int sy = (y - oy) * h / dh;
+        int i = (sy * w + sx) * 4;
+        b = bgra[i];
+        g = bgra[i + 1];
+        r = bgra[i + 2];
     }
 
     public void Detener()

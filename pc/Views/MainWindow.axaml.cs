@@ -1,9 +1,11 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Threading;
 using Avalonia.Interactivity;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
+using Lenscord.Core;
 using Lenscord.Controls;
 using Lenscord.ViewModels;
 
@@ -42,6 +44,10 @@ public partial class MainWindow : Window
         {
             _vm.LienzoCambiado += () => Dispatcher.UIThread.Post(() =>
                 this.FindControl<Image>("VistaPrevia")?.InvalidateVisual());
+            _vm.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(MainViewModel.MostrarPanelWifi)) MarcarPanelesAbiertos();
+            };
         }
 
         AddHandler(InputElement.PointerMovedEvent, OnPointerMoved,
@@ -79,10 +85,67 @@ public partial class MainWindow : Window
     private async void OnPausa(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.AlternarPausaAsync() ?? Task.CompletedTask);
     private async void OnCamara(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.CambiarCamaraAsync() ?? Task.CompletedTask);
     private async void OnResolucion(object? s, SelectionChangedEventArgs e) => await EjecutarAsync(() => _vm?.AplicarResolucionAsync() ?? Task.CompletedTask);
-    private void OnCambiarModo(object? s, RoutedEventArgs e) { if (_vm is not null) _vm.ModoWifi = !_vm.ModoWifi; }
+    private void OnConfiguracion(object? s, RoutedEventArgs e) => _vm?.AlternarConfiguracion();
+
+    private void OnPanelFicha(object? sender, RoutedEventArgs e)
+    {
+        if (sender is ToggleButton ficha && ficha.IsChecked == true)
+        {
+            foreach (string nombre in new[] { "FichaCaptura", "FichaWifi", "FichaRegistro" })
+            {
+                var otra = this.FindControl<ToggleButton>(nombre);
+                if (otra is not null && otra != ficha) otra.IsChecked = false;
+            }
+        }
+        MarcarPanelesAbiertos();
+    }
+
+    private void MarcarPanelesAbiertos()
+    {
+        var captura = this.FindControl<ToggleButton>("FichaCaptura");
+        var wifi = this.FindControl<ToggleButton>("FichaWifi");
+        var registro = this.FindControl<ToggleButton>("FichaRegistro");
+        var panelCaptura = this.FindControl<Border>("PanelCapturaContenido");
+        var panelWifi = this.FindControl<Border>("PanelWifiContenido");
+        var panelRegistro = this.FindControl<Border>("PanelRegistroContenido");
+        if (captura is not null && panelCaptura is not null)
+            panelCaptura.IsVisible = captura.IsChecked == true;
+        if (registro is not null && panelRegistro is not null)
+            panelRegistro.IsVisible = registro.IsChecked == true;
+        if (wifi is not null && panelWifi is not null)
+            panelWifi.IsVisible = wifi.IsChecked == true && (_vm?.MostrarPanelWifi ?? false);
+    }
+
+    private void OnSeleccionarTema(object? s, RoutedEventArgs e)
+    {
+        if (s is Control { DataContext: TemaInfo tema }) _vm?.SeleccionarTema(tema);
+    }    private async void OnCambiarModo(object? s, RoutedEventArgs e)
+    {
+        if (_vm is null) return;
+        if (_vm.ModoWifi)
+        {
+            // A USB: regreso real (adb usb + disconnect), no solo el flag.
+            await EjecutarAsync(() => _vm.VolverUsbAsync());
+        }
+        else
+        {
+            _vm.ModoWifi = true;
+            await EjecutarAsync(() => _vm.DetectarWifiAsync());
+        }
+    }
     private async void OnEmparejar(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.EmparejarWifiAsync() ?? Task.CompletedTask);
     private async void OnConectarWifi(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.ConectarWifiAsync() ?? Task.CompletedTask);
     private async void OnDetectarWifi(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.DetectarWifiAsync() ?? Task.CompletedTask);
+    private async void OnEmparejarDispositivoWifi(object? s, RoutedEventArgs e)
+    {
+        if (s is Control { DataContext: WifiDispositivoEncontrado dispositivo })
+            await EjecutarAsync(() => _vm?.EmparejarWifiAsync(dispositivo) ?? Task.CompletedTask);
+    }
+    private async void OnConectarDispositivoWifi(object? s, RoutedEventArgs e)
+    {
+        if (s is Control { DataContext: WifiDispositivoEncontrado dispositivo })
+            await EjecutarAsync(() => _vm?.ConectarWifiAsync(dispositivo) ?? Task.CompletedTask);
+    }
     private async void OnActivarWifi(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.ActivarWifiAsync() ?? Task.CompletedTask);
     private async void OnVolverUsb(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.VolverUsbAsync() ?? Task.CompletedTask);
 
