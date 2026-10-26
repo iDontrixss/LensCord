@@ -53,11 +53,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private int _sondeoEnVuelo;
     private bool _configuracionVisible;
     private string _temaActual = "claro";
-    private string _wifiIp = "", _wifiPuerto = "", _wifiPuertoEmparejamiento = "", _wifiCodigo = "", _wifiEstado = "Sin buscar dispositivos";
-    private string _estadoTexto = "Buscando el celular...";
-    private string _estadoAccion = "Conecta el cable USB y activa Depuración USB en el teléfono.";
+    private string _wifiIp = "", _wifiPuerto = "", _wifiPuertoEmparejamiento = "", _wifiCodigo = "", _wifiEstado = "";
+    private string _estadoTexto = "";
+    private string _estadoAccion = "";
+    private string? _kEstadoTexto, _kEstadoAccion, _kWifi;
+    private object[] _aEstado = Array.Empty<object>(), _aWifi = Array.Empty<object>();
+    private Configuracion _config = new();
     private bool _puedeIniciar, _transmitiendo, _fueraDeLinea;
-    private string _modelo = "", _android = "", _serie = "", _ctx = "";
+    private string _modelo = "", _android = "", _serie = "", _ctx = "", _modeloDispositivo = "";
     private bool _hayCelular;
 
     private CamaraInfo? _camara;
@@ -83,29 +86,32 @@ private string _indicadorZoom = "Zoom 1.0x";
     {
         _adb = new Adb(_raiz);
         CargarTemaGuardado();
+        WifiL("wifi.sin_buscar");
+        EstadoL(EstadoDispositivo.SinCable, "estado.buscando", "estado.buscando_accion");
+        Loc.CambioIdioma += () => Dispatcher.UIThread.Post(AlCambiarIdioma);
 
-        string dex = Path.Combine(_raiz, "dispositivo", "out", "lenscord.dex");
-        if (File.Exists(dex)) _sesion = new LensSession(_adb, dex);
+        string? dex = Rutas.BuscarDex();
+        if (dex is not null) _sesion = new LensSession(_adb, dex);
         _sesionNoHayDex = _sesion is null;
 
         _camaraVirtual.Error += s => Dispatcher.UIThread.Post(() => Escribir("! " + s));
 
 
 if (!_adb.Available)
-        {
-            _estadoTexto = "Falta adb";
-            _estadoAccion = "No se encontró adb. Descarga platform-tools a tools\\android-sdk\\platform-tools.";
-        }
+            EstadoL(EstadoDispositivo.SinCable, "estado.falta_adb", "estado.falta_adb_accion",
+                Path.Combine("tools", "android-sdk", "platform-tools"));
 
         try
         {
-            File.WriteAllText(Path.Combine(_raiz, "evidencia", "entorno.txt"),
-                $"raiz      = {_raiz}\r\n" +
-                $"base      = {AppContext.BaseDirectory}\r\n" +
-                $"adbPath   = {_adb.AdbPath}\r\n" +
-                $"adb existe= {_adb.Available}\r\n" +
-                $"dex       = {(_sesion is null ? "no compilado" : "presente")}\r\n" +
-                $"utc       = {DateTime.UtcNow:O}\r\n");
+            Directory.CreateDirectory(Rutas.Logs);
+            File.WriteAllText(Path.Combine(Rutas.Logs, "entorno.txt"),
+                $"so        = {System.Runtime.InteropServices.RuntimeInformation.OSDescription} ({Rutas.Rid})\n" +
+                $"raiz      = {_raiz}\n" +
+                $"base      = {AppContext.BaseDirectory}\n" +
+                $"adbPath   = {_adb.AdbPath}\n" +
+                $"adb existe= {_adb.Available}\n" +
+                $"dex       = {(_sesion is null ? "no compilado" : "presente")}\n" +
+                $"utc       = {DateTime.UtcNow:O}\n");
         }
         catch { }
 
@@ -130,12 +136,7 @@ if (!_adb.Available)
 
     private System.Threading.Timer? _relojTicker;
 
-    private static string RaizProyecto()
-    {
-        var d = new DirectoryInfo(AppContext.BaseDirectory);
-        while (d is not null && !File.Exists(Path.Combine(d.FullName, "PROGRESO.md"))) d = d.Parent;
-        return d?.FullName ?? AppContext.BaseDirectory;
-    }
+    private static string RaizProyecto() => Rutas.Raiz;
 
     private void RelojTick() => Dispatcher.UIThread.Post(() =>
     {
@@ -160,7 +161,7 @@ private async Task SondearAsync()
         }
         catch (Exception e)
         {
-            try { File.AppendAllText(Path.Combine(_raiz, "evidencia", "sondeo-error.txt"),
+            try { File.AppendAllText(Path.Combine(Rutas.Logs, "sondeo-error.txt"),
                                     $"{DateTime.Now:HH:mm:ss}  {e}\r\n"); }
             catch { }
         }
@@ -182,9 +183,9 @@ private async Task SondearAsync()
         // En USB se prefiere un transporte USB; el transporte Wi-Fi solo entra
         // como respaldo si de verdad esta conectado (estado "device").
         var d = ModoWifi
-            ? ordenados.FirstOrDefault(x => x.Serial.Contains(':'))
-            : ordenados.FirstOrDefault(x => !x.Serial.Contains(':'))
-              ?? ordenados.FirstOrDefault(x => x.Serial.Contains(':') && x.State == "device");
+            ? ordenados.FirstOrDefault(x => Adb.EsWifi(x.Serial))
+            : ordenados.FirstOrDefault(x => !Adb.EsWifi(x.Serial))
+              ?? (_usbElegidoManual ? null : ordenados.FirstOrDefault(x => Adb.EsWifi(x.Serial) && x.State == "device"));
 
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
@@ -192,15 +193,17 @@ private async Task SondearAsync()
             // Wi-Fi vivo. Una eleccion manual reciente manda: durante la
             // ventana de gracia (por ejemplo, mientras `adb usb` re-ennumera)
             // el modo no se revierte solo.
-            if (!ModoWifi && Environment.TickCount64 >= _usbPreferidoHasta
-                && d is not null && d.Serial.Contains(':')
-                && !dispositivos.Any(x => x.State == "device" && !x.Serial.Contains(':')))
+            if (dispositivos.Any(x => x.State == "device" && !Adb.EsWifi(x.Serial))) _usbElegidoManual = false;
+            if (!ModoWifi && !_usbElegidoManual && Environment.TickCount64 >= _usbPreferidoHasta
+                && d is not null && Adb.EsWifi(d.Serial)
+                && !dispositivos.Any(x => x.State == "device" && !Adb.EsWifi(x.Serial)))
             {
                 ModoWifi = true;
             }
 
             _hayCelular = d is not null;
             _serie = d?.Serial ?? "";
+            _modeloDispositivo = d?.Model ?? "";
             _puedeIniciar = d is not null && d.State == "device";
 
             // Mientras transmitimos (o tras un error) el sondeo no debe pisar
@@ -208,17 +211,16 @@ private async Task SondearAsync()
             if (!Transmitiendo && Estado != EstadoDispositivo.Error)
             {
                 if (d is null && ModoWifi)
-                    CambiarEstado(EstadoDispositivo.SinCable, "Wi-Fi no conectado",
-                        "Activa Depuración inalámbrica y usa Detectar Wi-Fi, o vuelve a USB.");
+                    EstadoL(EstadoDispositivo.SinCable, "estado.wifi_no_conectado", "estado.wifi_no_conectado_accion");
                 else if (d is null)
-                    CambiarEstado(EstadoDispositivo.SinCable, "Sin cable",
-                        "Conecta el celular por USB y activa Depuración USB en Ajustes > Ajustes del desarrollador.");
-                else if (d.State == "unauthorized") CambiarEstado(EstadoDispositivo.SinAutorizar, "Sin autorizar", "");
-                else if (d.State == "offline") CambiarEstado(EstadoDispositivo.SinDepuracion, "Sin depuración", "");
-                else CambiarEstado(EstadoDispositivo.Listo, "Listo", "Conexión " + (d.Serial.Contains(':') ? "Wi-Fi" : "USB") + ". Puedes iniciar la cámara.");
+                    EstadoL(EstadoDispositivo.SinCable, "estado.sin_cable", "estado.sin_cable_accion");
+                else if (d.State == "unauthorized") EstadoL(EstadoDispositivo.SinAutorizar, "estado.sin_autorizar", "estado.sin_autorizar_accion");
+                else if (d.State == "offline") EstadoL(EstadoDispositivo.SinDepuracion, "estado.sin_depuracion", "estado.sin_depuracion_accion");
+                else EstadoL(EstadoDispositivo.Listo, "estado.listo", "estado.listo_accion", Adb.EsWifi(d.Serial) ? "Wi-Fi" : "USB");
             }
 
             OnChanged(nameof(Serie));
+            OnChanged(nameof(NombreDispositivo));
             OnChanged(nameof(TransporteTexto));
             OnChanged(nameof(PuedeIniciar));
             OnChanged(nameof(HayCelular));
@@ -229,15 +231,51 @@ private async Task SondearAsync()
             try { await _sesion.ReintentarRestauracionAsync().ConfigureAwait(false); }
             catch (Exception e)
             {
-                try { File.AppendAllText(Path.Combine(_raiz, "evidencia", "sondeo-error.txt"),
+                try { File.AppendAllText(Path.Combine(Rutas.Logs, "sondeo-error.txt"),
                                         $"{DateTime.Now:HH:mm:ss}  restauracion: {e.Message}\r\n"); }
                 catch { }
             }
         }
     }
 
-private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
+    private void EstadoL(EstadoDispositivo e, string claveTexto, string claveAccion = "", params object[] args)
     {
+        CambiarEstado(e, Loc.T(claveTexto, args), claveAccion == "" ? "" : Loc.T(claveAccion, args));
+        _kEstadoTexto = claveTexto;
+        _kEstadoAccion = claveAccion;
+        _aEstado = args;
+    }
+
+    private void WifiL(string clave, params object[] args)
+    {
+        WifiEstado = Loc.T(clave, args);
+        _kWifi = clave;
+        _aWifi = args;
+    }
+
+    private void AlCambiarIdioma()
+    {
+        if (_kEstadoTexto is not null)
+        {
+            _estadoTexto = Loc.T(_kEstadoTexto, _aEstado);
+            _estadoAccion = string.IsNullOrEmpty(_kEstadoAccion) ? "" : Loc.T(_kEstadoAccion, _aEstado);
+            OnChanged(nameof(EstadoTexto), nameof(EstadoAccion));
+        }
+        if (_kWifi is not null)
+        {
+            _wifiEstado = Loc.T(_kWifi, _aWifi);
+            OnChanged(nameof(WifiEstado));
+        }
+        foreach (var tema in Temas) tema.Refrescar();
+        OnChanged(nameof(TituloSeccion), nameof(TextoBotonConfiguracion), nameof(Titular), nameof(Subtitular),
+                  nameof(FlashTooltip), nameof(LenteTexto), nameof(TipoZoomTexto), nameof(IdiomaActual),
+                  nameof(IdiomaEsEs), nameof(IdiomaEsEn));
+    }
+
+    private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
+    {
+        _kEstadoTexto = null;
+        _kEstadoAccion = null;
         Estado = e;
         _estadoTexto = texto;
         _estadoAccion = accion;
@@ -252,8 +290,23 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     // ------------------------------------------------------------- propiedades
     public ObservableCollection<TemaInfo> Temas { get; } = CrearTemas();
     public bool MostrarPanelConfiguracion => _configuracionVisible;
-    public string TituloSeccion => _configuracionVisible ? "Configuración" : "Espacio de cámara";
-    public string TextoBotonConfiguracion => _configuracionVisible ? "Volver a cámara" : "Configuración";
+    public string TituloSeccion => Loc.T(_configuracionVisible ? "titulo.configuracion" : "titulo.espacio_camara");
+    public string TextoBotonConfiguracion => Loc.T(_configuracionVisible ? "boton.volver_camara" : "titulo.configuracion");
+    public string IdiomaActual => Loc.Idioma;
+    public bool IdiomaEsEs => Loc.Idioma == "es";
+    public bool IdiomaEsEn => Loc.Idioma == "en";
+    public Configuracion Config => _config;
+    public Adb ClienteAdb => _adb;
+    public event Action? SolicitarOnboarding;
+    public void PedirOnboarding() => SolicitarOnboarding?.Invoke();
+
+    public void CambiarIdioma(string id)
+    {
+        if (!Loc.EsIdioma(id) || id == Loc.Idioma) return;
+        Loc.Cambiar(id);
+        _config.Idioma = id;
+        _config.Guardar();
+    }
     public bool MostrarPanelCamara => !_configuracionVisible;
     public string IconoMarca => Temas.FirstOrDefault(t => t.Id == _temaActual)?.EsOscuro == true
         ? "/Assets/Icons/lenscord-icon-dark.jpg" : "/Assets/Icons/lenscord-app.jpg";
@@ -267,7 +320,9 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         OnChanged(nameof(TextoBotonConfiguracion));
     }
 
-    public void SeleccionarTema(TemaInfo? tema)
+    public void SeleccionarTema(TemaInfo? tema) => AplicarTema(tema, true);
+
+    private void AplicarTema(TemaInfo? tema, bool guardar)
     {
         if (tema is null) return;
         _temaActual = tema.Id;
@@ -279,39 +334,31 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
                 app.Resources[key] = new SolidColorBrush(Color.Parse(color));
         }
         OnChanged(nameof(IconoMarca));
-        try
+        if (guardar)
         {
-            var ruta = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lenscord", "config.json");
-            Directory.CreateDirectory(Path.GetDirectoryName(ruta)!);
-            File.WriteAllText(ruta, JsonSerializer.Serialize(new { tema = tema.Id }));
+            _config.Tema = tema.Id;
+            _config.Guardar();
         }
-        catch (Exception ex) { Escribir("No se pudo guardar el tema: " + ex.Message); }
     }
 
     private void CargarTemaGuardado()
     {
-        try
-        {
-            var ruta = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lenscord", "config.json");
-            if (!File.Exists(ruta)) { SeleccionarTema(Temas.FirstOrDefault(t => t.Id == "claro")); return; }
-            using var doc = JsonDocument.Parse(File.ReadAllText(ruta));
-            var id = doc.RootElement.TryGetProperty("tema", out var valor) ? valor.GetString() : "claro";
-            SeleccionarTema(Temas.FirstOrDefault(t => t.Id == id) ?? Temas.First(t => t.Id == "claro"));
-        }
-        catch { SeleccionarTema(Temas.First(t => t.Id == "claro")); }
+        _config = Configuracion.Cargar();
+        Loc.Iniciar(_config.Idioma);
+        AplicarTema(Temas.FirstOrDefault(t => t.Id == _config.Tema) ?? Temas.First(t => t.Id == "claro"), false);
     }
 
     private static ObservableCollection<TemaInfo> CrearTemas() => new()
     {
-        new("claro", "Claro", "Lenscord clásico", false, "#ECECEF", "#FBFBFB", "#4C5BD4",
+        new("claro", false, "#ECECEF", "#FBFBFB", "#4C5BD4",
             "#ECECEF", "#FBFBFB", "#F7F7F8", "#F1F1F2", "#EAEAEC", "#111111", "#5C5C63", "#8E8E96", "#E5E5E9", "#4C5BD4", "#111111", "#2A2A2E", "#FFFFFF"),
-        new("black", "Black", "Negro profundo", true, "#08090B", "#111318", "#8798FF",
+        new("black", true, "#08090B", "#111318", "#8798FF",
             "#08090B", "#111318", "#0D0F13", "#1A1D23", "#242831", "#F5F6F8", "#C0C3CB", "#969AA4", "#2A2E38", "#8798FF", "#8798FF", "#7184F2", "#FFFFFF"),
-        new("gris", "Gris", "Neutro y suave", false, "#E6E8EB", "#F5F6F7", "#64748B",
+        new("gris", false, "#E6E8EB", "#F5F6F7", "#64748B",
             "#E6E8EB", "#F5F6F7", "#F0F1F3", "#E9EAED", "#DFE1E5", "#25282E", "#555A63", "#787D86", "#D9DCE1", "#586C91", "#25282E", "#41454D", "#FFFFFF"),
-        new("beige", "Beige", "Cálido y tranquilo", false, "#F2EDE4", "#FFFCF7", "#A27648",
+        new("beige", false, "#F2EDE4", "#FFFCF7", "#A27648",
             "#F2EDE4", "#FFFCF7", "#FAF6EE", "#F1EADF", "#E8DFD1", "#302A24", "#665B4F", "#8B8175", "#E7DED0", "#9B7044", "#302A24", "#4B4035", "#FFFFFF"),
-        new("celeste", "Celeste", "Casi blanco, fresco", false, "#EAF6FB", "#FCFEFF", "#4F9FC4",
+        new("celeste", false, "#EAF6FB", "#FCFEFF", "#4F9FC4",
             "#EAF6FB", "#FCFEFF", "#F4FAFD", "#E8F3F8", "#DCEBF2", "#1D3039", "#4E6570", "#758A93", "#D9EAF1", "#438FB5", "#1D3039", "#347A9D", "#FFFFFF")
     };
     public ObservableCollection<string> Registro { get; } = new();
@@ -354,6 +401,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         {
             if (_modoWifi == value) return;
             _modoWifi = value;
+            if (value) _usbElegidoManual = false;
             RefrescarVisibilidad();
             OnChanged(nameof(MostrarPanelWifi));
             _ = SondearAsync();
@@ -365,7 +413,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     public string WifiPuerto { get => _wifiPuerto; set { _wifiPuerto = value; OnChanged(); } }
     public string WifiPuertoEmparejamiento { get => _wifiPuertoEmparejamiento; set { _wifiPuertoEmparejamiento = value; OnChanged(); } }
     public string WifiCodigo { get => _wifiCodigo; set { _wifiCodigo = value; OnChanged(); } }
-    public string WifiEstado { get => _wifiEstado; set { _wifiEstado = value; OnChanged(); } }
+    public string WifiEstado { get => _wifiEstado; set { _wifiEstado = value; _kWifi = null; OnChanged(); } }
 
     public bool HayCelular { get => _hayCelular; private set { _hayCelular = value; OnChanged(); } }
     public bool PuedeIniciar { get => _puedeIniciar; private set { _puedeIniciar = value; OnChanged(); } }
@@ -415,23 +463,24 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
             OnChanged(nameof(TransporteTexto));
         }
     }
+    public string NombreDispositivo => string.IsNullOrWhiteSpace(_modeloDispositivo) ? Serie : _modeloDispositivo;
     public string TransporteTexto => string.IsNullOrEmpty(Serie)
         ? ""
-        : (Serie.Contains(':') ? "Wi-Fi · " + Serie : "USB · " + Serie);
+        : (Adb.EsWifi(Serie) ? "Wi-Fi · " : "USB · ") + NombreDispositivo;
     public bool HayTransporte => !string.IsNullOrEmpty(Serie);
     public string Contexto { get => _ctx; private set { _ctx = value; OnChanged(); } }
     public string Reloj { get => _reloj; private set { _reloj = value; OnChanged(); } }
 
     public WriteableBitmap? Lienzo { get => _lienzo; private set { _lienzo = value; OnChanged(); } }
 
-    public string Titular => Transmitiendo && _primerFrameReal ? "Tu cámara está lista"
-        : Transmitiendo ? "Esperando imagen del celular..."
-        : FueraDeLinea ? "Sin celular conectado"
-        : Estado == EstadoDispositivo.Error ? "La cámara no arrancó"
-        : HayCelular ? "Tu celular está listo"
-        : "Conecta el cable y empieza";
+    public string Titular => Loc.T(Transmitiendo && _primerFrameReal ? "titular.lista"
+        : Transmitiendo ? "titular.esperando"
+        : FueraDeLinea ? "titular.sin_celular"
+        : Estado == EstadoDispositivo.Error ? "titular.error"
+        : HayCelular ? "titular.celular_listo"
+        : "titular.conecta");
     public string Subtitular => Transmitiendo && _primerFrameReal
-        ? $"{Modelo} - Android {Android} - {Camara?.Nombre ?? "Cámara"}"
+        ? $"{Modelo} - Android {Android} - {Camara?.Nombre ?? Loc.T("camara.generica")}"
         : Transmitiendo
             ? ""
             : FueraDeLinea
@@ -439,10 +488,10 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
                 : Estado is EstadoDispositivo.SinAutorizar
                     or EstadoDispositivo.SinDepuracion
                     or EstadoDispositivo.Error
-                    ? "Revisa el aviso y el Registro para continuar."
+                    ? Loc.T("subtitular.revisa")
                     : HayCelular
-                        ? "Conexión lista. Inicia cuando quieras."
-                        : "Conecta el celular por USB y activa Depuración USB en el teléfono.";
+                        ? Loc.T("subtitular.lista")
+                        : Loc.T("subtitular.conecta");
 
     public CamaraInfo? Camara
     {
@@ -460,7 +509,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         }
     }
 
-    public string LenteTexto => Camara?.Nombre ?? "Sin cámara";
+    public string LenteTexto => Camara?.Nombre ?? Loc.T("camara.ninguna");
 
     public double Zoom
     {
@@ -499,9 +548,9 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     }
     public bool TorchPosible => _flashOk && Transmitiendo;
     public string FlashIconSvg => Torch ? "/Assets/Icons/flash-on.svg" : "/Assets/Icons/flash.svg";
-    public string FlashTooltip => !_flashOk ? "El celular o cámara seleccionada no tiene flash"
-        : !Transmitiendo ? "Inicia la cámara para usar el flash"
-        : Torch ? "Apagar flash" : "Encender flash";
+    public string FlashTooltip => Loc.T(!_flashOk ? "flash.sin_flash"
+        : !Transmitiendo ? "flash.iniciar"
+        : Torch ? "flash.apagar" : "flash.encender");
 
     private void ActualizarTorch(bool value)
     {
@@ -526,7 +575,8 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
             OnChanged(nameof(FlashTooltip));
         }
     }
-    public string TipoZoom { get => _tipoZoom; private set { _tipoZoom = value; OnChanged(); OnChanged(nameof(IndicadorZoom)); } }
+    public string TipoZoom { get => _tipoZoom; private set { _tipoZoom = value; OnChanged(); OnChanged(nameof(IndicadorZoom), nameof(TipoZoomTexto)); } }
+    public string TipoZoomTexto => Loc.T("zoom.tipo", _tipoZoom);
 
     public int Ancho { get => _ancho; private set { _ancho = value; OnChanged(); OnChanged(nameof(ResolucionTexto)); } }
     public int Alto { get => _alto; private set { _alto = value; OnChanged(); OnChanged(nameof(ResolucionTexto)); } }
@@ -550,11 +600,11 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     // ------------------------------------------------------------- acciones
     public async Task IniciarAsync()
     {
-        if (_sesion is null) { Escribir("No hay .dex compilado."); return; }
-        if (!PuedeIniciar) { Escribir("Todavia no hay un celular autorizado."); return; }
+        if (_sesion is null) { Escribir(Loc.T("log.sin_dex")); return; }
+        if (!PuedeIniciar) { Escribir(Loc.T("log.sin_celular_autorizado")); return; }
         if (!await _operacion.WaitAsync(0))
         {
-            Escribir("Ya hay una operacion en curso. Espera a que termine.");
+            Escribir(Loc.T("log.operacion_en_curso"));
             return;
         }
 
@@ -574,53 +624,55 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
             Transmitiendo = true;
             FueraDeLinea = false;
             _camaraVirtual.Iniciar();
-            Escribir($"Transporte: {(Serie.Contains(':') ? "Wi-Fi" : "USB")} {Serie}");
-            CambiarEstado(EstadoDispositivo.Transmitiendo, "Iniciando...", "Subiendo el programa y abriendo la cámara.");
+            Escribir(Loc.T("log.transporte", Adb.EsWifi(Serie) ? "Wi-Fi" : "USB", Serie));
+            EstadoL(EstadoDispositivo.Transmitiendo, "estado.iniciando", "estado.iniciando_accion");
 
-            bool optimizarWifi = Serie.Contains(":");
+            bool optimizarWifi = Adb.EsWifi(Serie);
             await _sesion.IniciarAsync(Serie, token, optimizarWifi).ConfigureAwait(true);
             if (optimizarWifi)
-                Escribir($"Perfil Wi-Fi: solicitado 640x480 @ 30; negociado {Ancho}x{Alto} @ {Fps} fps.");
+                Escribir(Loc.T("log.perfil_wifi", Ancho, Alto, Fps));
             token.ThrowIfCancellationRequested();
             await _sesion.ZoomAsync(Zoom).ConfigureAwait(true);
             token.ThrowIfCancellationRequested();
 
             var flujo = _sesion.FlujoVideo;
-            if (flujo is null) throw new InvalidOperationException("No se abrio el flujo de video");
+            if (flujo is null) throw new InvalidOperationException(Loc.T("error.sin_flujo"));
 
             var ffmpeg = await Task.Run(() => FfmpegH264Decoder.BuscarFfmpeg(_raiz), token).ConfigureAwait(true);
-            IFuenteVideo fuente = ffmpeg is null ? new MjpegDecoder() : new FfmpegH264Decoder();
+            if (ffmpeg is null) throw new InvalidOperationException(Loc.T("error.sin_ffmpeg"));
+            IFuenteVideo fuente = new FfmpegH264Decoder();
 
             fuente.FrameRecibido += RealFrame;
             fuente.Error += s => Dispatcher.UIThread.Post(() => Escribir("! " + s));
             await fuente.IniciarAsync(flujo, Ancho, Alto, token).ConfigureAwait(true);
             _sesion.Fuente = fuente;
 
-            Escribir($"Fuente de video: {fuente.Nombre}");
+            Escribir(Loc.T("log.fuente_video", fuente.Nombre));
 
             // Abrir el tunel no es tener imagen. Esperamos el primer frame real:
             // si el telefono no puede abrir la camara, el proceso muere y aqui se ve.
             bool llegoImagen = await EsperarPrimerFrameAsync(TimeSpan.FromSeconds(20), token);
             if (!llegoImagen)
             {
-                Escribir("! No llego ningun frame del celular en 20 s.");
-                throw new TimeoutException("El tunel funciona pero el telefono no envio ningun frame. Revisa el Registro.");
+                Escribir("! " + Loc.T("log.sin_frames_20"));
+                throw new TimeoutException(Loc.T("error.sin_frames"));
             }
 
-            CambiarEstado(EstadoDispositivo.Transmitiendo, "Transmitiendo", "");
+            EstadoL(EstadoDispositivo.Transmitiendo, "estado.transmitiendo");
         }
         catch (OperationCanceledException)
         {
-            Escribir("Inicio cancelado.");
+            Escribir(Loc.T("log.inicio_cancelado"));
             Transmitiendo = false;
-            CambiarEstado(_hayCelular ? EstadoDispositivo.Listo : EstadoDispositivo.SinCable,
-                          _hayCelular ? "Listo" : "Sin cable",
-                          _hayCelular ? "Camara detenida. Puedes volver a iniciar." : "Conecta el celular por USB.");
+            EstadoL(_hayCelular ? EstadoDispositivo.Listo : EstadoDispositivo.SinCable,
+                    _hayCelular ? "estado.listo" : "estado.sin_cable",
+                    _hayCelular ? "estado.camara_detenida" : "estado.conecta_usb",
+                    Adb.EsWifi(Serie) ? "Wi-Fi" : "USB");
         }
         catch (Exception e)
         {
             Transmitiendo = false;
-            CambiarEstado(EstadoDispositivo.Error, "Error al iniciar", e.Message);
+            CambiarEstado(EstadoDispositivo.Error, Loc.T("estado.error_iniciar"), e.Message);
             Escribir("ERROR: " + e);
         }
         finally
@@ -629,7 +681,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
             {
                 _camaraVirtual.Detener();
                 try { await _sesion.DetenerAsync().ConfigureAwait(true); }
-                catch (Exception e) { Escribir("ERROR al limpiar tras el inicio: " + e.Message); }
+                catch (Exception e) { Escribir(Loc.T("log.error_limpiar", e.Message)); }
             }
             _operacion.Release();
             OnChanged();
@@ -642,7 +694,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         try { _ctsSesion?.Cancel(); } catch { }
         Transmitiendo = false;
         _camaraVirtual.Detener();
-        Escribir("Deteniendo...");
+        Escribir(Loc.T("log.deteniendo"));
 
         await _operacion.WaitAsync();
         try
@@ -652,17 +704,18 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
             Interlocked.Exchange(ref _ultimoFrameRealMs, 0);
             Interlocked.Exchange(ref _framePendiente, null);
             if (_sesion is null || _sesion.LimpiezaOk)
-                Escribir("Telefono limpio. No queda ningun proceso ni archivo nuestro.");
+                Escribir(Loc.T("log.telefono_limpio"));
             else
-                Escribir("! No se pudo confirmar la limpieza del telefono. Revisa el Registro.");
-            CambiarEstado(_hayCelular ? EstadoDispositivo.Listo : EstadoDispositivo.SinCable,
-                          _hayCelular ? "Listo" : "Sin cable",
-                          _hayCelular ? "Camara detenida. Puedes volver a iniciar." : "Conecta el celular por USB.");
+                Escribir("! " + Loc.T("log.limpieza_fallida"));
+            EstadoL(_hayCelular ? EstadoDispositivo.Listo : EstadoDispositivo.SinCable,
+                    _hayCelular ? "estado.listo" : "estado.sin_cable",
+                    _hayCelular ? "estado.camara_detenida" : "estado.conecta_usb",
+                    Adb.EsWifi(Serie) ? "Wi-Fi" : "USB");
         }
         catch (Exception e)
         {
-            Escribir("ERROR al detener: " + e);
-            CambiarEstado(EstadoDispositivo.Error, "Error al detener", e.Message);
+            Escribir(Loc.T("log.error_detener", e));
+            CambiarEstado(EstadoDispositivo.Error, Loc.T("estado.error_detener"), e.Message);
         }
         finally
         {
@@ -682,13 +735,14 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     public async Task AlternarPausaAsync()
     {
         Pausado = !Pausado;
+        if (!Pausado) Interlocked.Exchange(ref _ultimoFrameRealMs, Environment.TickCount64);
         if (_sesion is not null && Transmitiendo) await _sesion.PausaAsync(Pausado);
     }
 
     public async Task CambiarCamaraAsync()
     {
         if (_sesion is null || !Transmitiendo) return;
-        if (Camaras.Count < 2) { Escribir("El telefono solo reporta una camara."); return; }
+        if (Camaras.Count < 2) { Escribir(Loc.T("log.una_camara")); return; }
         int i = Camaras.IndexOf(Camara!) ;
         var siguiente = Camaras[(i + 1) % Camaras.Count];
         await _sesion.CamaraAsync(siguiente.Id);
@@ -712,14 +766,14 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
             WifiPuertoEmparejamiento = puerto;
         }
         if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(puerto) || string.IsNullOrWhiteSpace(WifiCodigo))
-        { WifiEstado = "Falta la IP, el puerto de emparejamiento o el código de 6 dígitos."; return; }
+        { WifiL("wifi.falta_pairing"); return; }
 
-        WifiEstado = $"Emparejando {ip}:{puerto}...";
+        WifiL("wifi.emparejando", ip, puerto);
         var r = await _adb.PairAsync($"{ip}:{puerto}", WifiCodigo);
         Escribir("adb pair: " + r.All);
         if (r.All.Contains("Successfully", StringComparison.OrdinalIgnoreCase))
         {
-            WifiEstado = "Emparejado. Buscando el puerto de conexión...";
+            WifiL("wifi.emparejado");
             await DetectarWifiAsync();
         }
         else WifiEstado = r.All;
@@ -728,7 +782,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     public Task ConectarWifiAsync()
     {
         if (string.IsNullOrWhiteSpace(WifiIp) || string.IsNullOrWhiteSpace(WifiPuerto))
-        { WifiEstado = "Falta la IP o el puerto de conexión."; return Task.CompletedTask; }
+        { WifiL("wifi.falta_conexion"); return Task.CompletedTask; }
         return ConectarWifiEndpointAsync(WifiIp, WifiPuerto);
     }
 
@@ -738,7 +792,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         if (!dispositivo.TieneConexion)
         {
             WifiPuertoEmparejamiento = dispositivo.PuertoEmparejamiento ?? "";
-            WifiEstado = $"{dispositivo.Nombre} requiere emparejamiento. Ingresa el código del teléfono y pulsa Emparejar.";
+            WifiL("wifi.requiere_emparejar", dispositivo.Titulo);
             return;
         }
 
@@ -749,7 +803,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     private async Task ConectarWifiEndpointAsync(string ip, string puerto)
     {
         string endpoint = $"{ip}:{puerto}";
-        WifiEstado = $"Conectando a {endpoint}...";
+        WifiL("wifi.conectando", endpoint);
         var r = await _adb.ConnectAsync(endpoint);
         Escribir("adb connect: " + r.All);
         bool conectado = r.All.Contains("connected", StringComparison.OrdinalIgnoreCase)
@@ -765,25 +819,112 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         if (!prueba.All.Contains("wifi_ok"))
         {
             await _adb.DisconnectAsync(endpoint);
-            WifiEstado = "ADB conectó, pero no respondió el teléfono. Empareja la depuración inalámbrica.";
+            WifiL("wifi.sin_respuesta");
             Escribir("adb shell Wi-Fi: " + prueba.All);
             return;
         }
 
         WifiIp = ip;
         WifiPuerto = puerto;
-        WifiEstado = $"Conectado a {endpoint}.";
+        WifiL("wifi.conectado", endpoint);
         ModoWifi = true;
         await SondearInternoAsync();
     }
 
-    public async Task DetectarWifiAsync()
+    private async Task<string?> LeerIpWifiAsync(string serie)
     {
-        if (Transmitiendo) { WifiEstado = "Detén la cámara antes de buscar Wi-Fi."; return; }
+        string[] comandos =
+        {
+            "ip -4 route get 1.1.1.1",
+            "ip -4 addr show wlan0",
+            "ip -4 -o addr show",
+        };
+        foreach (var comando in comandos)
+        {
+            var r = await _adb.ShellAsync(serie, comando, 10000);
+            if (!r.Ok) continue;
+            foreach (var linea in r.StdOut.Split('\n'))
+            {
+                if (Regex.IsMatch(linea, @"\b(rmnet|ccmni|tun|lo)\w*\b") && !linea.Contains("wlan")) continue;
+                var m = Regex.Match(linea, @"(?:src|inet)\s+(\d+\.\d+\.\d+\.\d+)");
+                if (m.Success && !m.Groups[1].Value.StartsWith("127.")) return m.Groups[1].Value;
+            }
+        }
+        return null;
+    }
 
-        WifiDispositivos.Clear();
-        OnChanged(nameof(HayDispositivosWifi));
-        WifiEstado = "Buscando dispositivos en la red local...";
+    private readonly Dictionary<string, string> _modelosWifi = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> _sondeosModelo = new(StringComparer.OrdinalIgnoreCase);
+    private int _busquedaWifi;
+
+    public Task DetectarWifiAsync() => BuscarWifiAsync(false);
+    public Task BuscarWifiSilenciosoAsync() => BuscarWifiAsync(true);
+
+    private async Task BuscarWifiAsync(bool silencioso)
+    {
+        if (Transmitiendo)
+        {
+            if (!silencioso) WifiL("wifi.detener_buscar");
+            return;
+        }
+        if (Interlocked.CompareExchange(ref _busquedaWifi, 1, 0) != 0) return;
+        try
+        {
+            await BuscarWifiInternoAsync(silencioso);
+        }
+        finally
+        {
+            Volatile.Write(ref _busquedaWifi, 0);
+        }
+    }
+
+    private static string? NombreDeModelo(string salida)
+    {
+        var lineas = salida.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lineas.Length == 0) return null;
+        string fabricante = lineas.Length > 1 ? lineas[0] : "";
+        string modelo = lineas[^1];
+        if (string.IsNullOrWhiteSpace(modelo) || modelo.Contains("error", StringComparison.OrdinalIgnoreCase)) return null;
+        if (fabricante.Length > 0 && !modelo.StartsWith(fabricante, StringComparison.OrdinalIgnoreCase))
+            modelo = char.ToUpperInvariant(fabricante[0]) + fabricante[1..] + " " + modelo;
+        return modelo;
+    }
+
+    private async Task<string?> LeerModeloWifiAsync(string ip, string puerto)
+    {
+        if (_modelosWifi.TryGetValue(ip, out var guardado)) return guardado;
+        if (_sondeosModelo.TryGetValue(ip, out var ultimo) && Environment.TickCount64 - ultimo < 30000) return null;
+        _sondeosModelo[ip] = Environment.TickCount64;
+
+        string endpoint = $"{ip}:{puerto}";
+        var conectados = await _adb.DevicesAsync();
+        var yaConectado = conectados.FirstOrDefault(x => x.State == "device"
+            && x.Serial.StartsWith(ip + ":", StringComparison.OrdinalIgnoreCase));
+        if (yaConectado is not null && !string.IsNullOrWhiteSpace(yaConectado.Model))
+            return _modelosWifi[ip] = yaConectado.Model;
+
+        var r = await _adb.ConnectAsync(endpoint, 6000);
+        bool conectado = r.All.Contains("connected", StringComparison.OrdinalIgnoreCase)
+                      && !r.All.Contains("cannot", StringComparison.OrdinalIgnoreCase)
+                      && !r.All.Contains("failed", StringComparison.OrdinalIgnoreCase);
+        if (!conectado) return null;
+
+        var propiedades = await _adb.ShellAsync(endpoint,
+            "getprop ro.product.manufacturer; getprop ro.product.model", 5000);
+        string? nombre = propiedades.Ok ? NombreDeModelo(propiedades.StdOut) : null;
+        if (yaConectado is null) await _adb.DisconnectAsync(endpoint);
+        if (nombre is not null) _modelosWifi[ip] = nombre;
+        return nombre;
+    }
+
+    private async Task BuscarWifiInternoAsync(bool silencioso)
+    {
+        if (!silencioso)
+        {
+            WifiDispositivos.Clear();
+            OnChanged(nameof(HayDispositivosWifi));
+            WifiL("wifi.buscando");
+        }
         var servicios = await _adb.MdnsServicesAsync();
         var encontrados = new Dictionary<string, (string Nombre, string? Conexion, string? Emparejamiento)>(StringComparer.OrdinalIgnoreCase);
 
@@ -806,38 +947,49 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
                 esEmparejamiento ? puerto : hallado.Emparejamiento);
         }
 
+        var lista = new List<WifiDispositivoEncontrado>();
         foreach (var (ip, datos) in encontrados.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
-            WifiDispositivos.Add(new WifiDispositivoEncontrado(datos.Nombre, ip, datos.Conexion, datos.Emparejamiento));
-        OnChanged(nameof(HayDispositivosWifi));
+        {
+            string? modelo = datos.Conexion is null ? null : await LeerModeloWifiAsync(ip, datos.Conexion);
+            lista.Add(new WifiDispositivoEncontrado(datos.Nombre, ip, datos.Conexion, datos.Emparejamiento, modelo));
+        }
 
-        WifiEstado = WifiDispositivos.Count == 0
-            ? "No encontré dispositivos. Activa Depuración inalámbrica y verifica que ambos estén en la misma red. También puedes usar la IP manual."
-            : $"Encontré {WifiDispositivos.Count} dispositivo(s). Elige uno para conectar o emparejarlo.";
+        bool igual = WifiDispositivos.Count == lista.Count && WifiDispositivos.SequenceEqual(lista);
+        if (!igual)
+        {
+            WifiDispositivos.Clear();
+            foreach (var dispositivo in lista) WifiDispositivos.Add(dispositivo);
+            OnChanged(nameof(HayDispositivosWifi));
+        }
+
+        bool mensajeDeBusqueda = _kWifi is null or "wifi.sin_buscar" or "wifi.buscando" or "wifi.buscando_continuo"
+            or "wifi.encontrados" or "wifi.ninguno";
+        if (silencioso && !mensajeDeBusqueda) return;
+        if (WifiDispositivos.Count == 0) WifiL(silencioso ? "wifi.buscando_continuo" : "wifi.ninguno");
+        else WifiL("wifi.encontrados", WifiDispositivos.Count);
     }
 
     public async Task ActivarWifiAsync()
     {
-        if (Transmitiendo) { WifiEstado = "Deten la camara antes de activar Wi-Fi."; return; }
+        if (Transmitiendo) { WifiL("wifi.detener_activar"); return; }
 
         var dispositivos = await _adb.DevicesAsync();
-        var usb = dispositivos.FirstOrDefault(x => x.State == "device" && !x.Serial.Contains(':'));
+        var usb = dispositivos.FirstOrDefault(x => x.State == "device" && !Adb.EsWifi(x.Serial));
         if (usb is null)
         {
-            WifiEstado = "Conecta el USB una vez para activar Wi-Fi.";
+            WifiL("wifi.conectar_usb_una_vez");
             return;
         }
 
-        WifiEstado = "Leyendo la IP del celular...";
-        var ipr = await _adb.ShellAsync(usb.Serial, "ip -4 addr show wlan0", 10000);
-        var ipm = Regex.Match(ipr.All, @"inet\s+(\d+\.\d+\.\d+\.\d+)");
-        if (!ipm.Success)
+        WifiL("wifi.leyendo_ip");
+        string? ip = await LeerIpWifiAsync(usb.Serial);
+        if (ip is null)
         {
-            WifiEstado = "El celular no tiene IP Wi-Fi. Activa Wi-Fi y vuelve a intentar.";
+            WifiL("wifi.sin_ip");
             return;
         }
-        string ip = ipm.Groups[1].Value;
 
-        WifiEstado = "Activando ADB por Wi-Fi...";
+        WifiL("wifi.activando");
         var tcp = await _adb.RunAsync(new[] { "-s", usb.Serial, "tcpip", "5555" }, 10000);
         Escribir("adb tcpip: " + tcp.All);
         await Task.Delay(1500);
@@ -855,59 +1007,55 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         }
         if (!conectado)
         {
-            WifiEstado = $"No se pudo conectar a {serial}. Revisa que PC y celular esten en la misma red.";
+            WifiL("wifi.no_conecta", serial);
             return;
         }
 
         var prueba = await _adb.ShellAsync(serial, "echo wifi_ok", 5000);
         if (!prueba.All.Contains("wifi_ok"))
         {
-            WifiEstado = "ADB respondio pero el shell no. Revisa el aviso de depuracion en el celular.";
+            WifiL("wifi.shell_no");
             return;
         }
 
         WifiIp = ip;
         WifiPuerto = "5555";
-        WifiEstado = $"Wi-Fi activo en {serial}. Ya puedes desconectar el USB.";
+        WifiL("wifi.activo", serial);
         ModoWifi = true;
-        Escribir("Wi-Fi activo: " + serial);
+        Escribir(Loc.T("log.wifi_activo", serial));
         await SondearInternoAsync();
     }
 
     public async Task VolverUsbAsync()
     {
-        if (Transmitiendo) { WifiEstado = "Deten la camara antes de volver a USB."; return; }
+        if (Transmitiendo) { WifiL("wifi.detener_usb"); return; }
 
         var dispositivos = await _adb.DevicesAsync();
-        var usb = dispositivos.FirstOrDefault(x => x.State == "device" && !x.Serial.Contains(':'));
-        var wifi = dispositivos.FirstOrDefault(x => x.State == "device" && x.Serial.Contains(':'));
-        if (usb is null)
+        var usb = dispositivos.FirstOrDefault(x => x.State == "device" && !Adb.EsWifi(x.Serial));
+        var wifi = dispositivos.FirstOrDefault(x => x.State == "device" && Adb.EsWifi(x.Serial));
+        MarcarPreferenciaUsb();
+
+        if (wifi is not null)
         {
-            WifiEstado = "Conecta el USB antes de volver a ese modo.";
-            return;
-        }
-        if (wifi is null)
-        {
-            MarcarPreferenciaUsb();
-            ModoWifi = false;
-            WifiEstado = "No habia Wi-Fi activo; se usa USB.";
-            await SondearInternoAsync();
-            return;
+            WifiL("wifi.volviendo");
+            var r = await _adb.RunAsync(new[] { "-s", wifi.Serial, "usb" }, 10000);
+            Escribir("adb usb: " + r.All);
+            await _adb.DisconnectAsync(wifi.Serial);
         }
 
-        WifiEstado = "Volviendo a USB...";
-        var r = await _adb.RunAsync(new[] { "-s", wifi.Serial, "usb" }, 10000);
-        Escribir("adb usb: " + r.All);
-        await _adb.DisconnectAsync(wifi.Serial);
-        MarcarPreferenciaUsb();
         ModoWifi = false;
-        WifiEstado = "ADB volvio a USB.";
+        WifiL(usb is null ? "wifi.modo_usb_sin_cable"
+            : wifi is null ? "wifi.usb_sin_wifi" : "wifi.usb_ok");
         await SondearInternoAsync();
     }
-
     /// <summary>El usuario pidio USB: bloquea el rescate automatico a Wi-Fi durante la ventana de gracia.</summary>
-    private void MarcarPreferenciaUsb() =>
+    private void MarcarPreferenciaUsb()
+    {
+        _usbElegidoManual = true;
         _usbPreferidoHasta = Environment.TickCount64 + VentanaGraciaUsbMs;
+    }
+
+    private volatile bool _usbElegidoManual;
 
     // ------------------------------------------------------------- video
     private void RealFrame(Frame f)
@@ -1060,7 +1208,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
 
             LienzoCambiado?.Invoke();
         }
-        catch (Exception e) { Escribir("pintado: " + e.Message); }
+        catch (Exception e) { Escribir(Loc.T("log.pintado", e.Message)); }
     }
 
     public event Action? LienzoCambiado;
@@ -1103,7 +1251,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
 
         if (Transmitiendo && Estado != EstadoDispositivo.Transmitiendo)
         {
-            CambiarEstado(EstadoDispositivo.Transmitiendo, "Transmitiendo", "");
+            EstadoL(EstadoDispositivo.Transmitiendo, "estado.transmitiendo");
         }
         OnChanged();
     }
@@ -1120,7 +1268,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
             FueraDeLinea = true;
-            Escribir("No hay ningún celular en adb. Vista con señal simulada.");
+            Escribir(Loc.T("log.demo"));
         });
 
         await demo.IniciarAsync(Stream.Null, 960, 540, CancellationToken.None);
@@ -1154,7 +1302,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         Dispatcher.UIThread.Post(async () =>
         {
             try { await DetenerPorFaltaDeFramesAsync(); }
-            catch (Exception e) { Escribir("ERROR del vigilante: " + e.Message); }
+            catch (Exception e) { Escribir(Loc.T("log.error_vigilante", e.Message)); }
             finally { Volatile.Write(ref _vigilando, 0); }
         });
     }
@@ -1162,20 +1310,18 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
     private async Task DetenerPorFaltaDeFramesAsync()
     {
         if (!Transmitiendo) return;
-        Escribir("! No llegaron frames reales en 8 s; deteniendo la vista.");
+        Escribir("! " + Loc.T("log.sin_frames_8"));
         await DetenerAsync();
-        CambiarEstado(EstadoDispositivo.Error, "Sin imagen",
-            "El celular dejó de enviar imagen. Revisa el Registro y vuelve a iniciar.");
+        EstadoL(EstadoDispositivo.Error, "estado.sin_imagen", "estado.sin_imagen_dejo");
     }
 
     private async Task DetenerPorProcesoTerminadoAsync()
     {
         if (!Transmitiendo) return;
-        Escribir("! El proceso del celular terminó; deteniendo la vista.");
+        Escribir("! " + Loc.T("log.proceso_termino"));
         try { await DetenerAsync(); }
-        catch (Exception e) { Escribir("ERROR al detener tras la caida: " + e.Message); }
-        CambiarEstado(EstadoDispositivo.Error, "Sin imagen",
-            "El proceso del celular terminó. Revisa el Registro.");
+        catch (Exception e) { Escribir(Loc.T("log.error_detener_caida", e.Message)); }
+        EstadoL(EstadoDispositivo.Error, "estado.sin_imagen", "estado.sin_imagen_proceso");
     }
 
     public void Escribir(string s)
@@ -1195,7 +1341,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         {
             lock (_logLock)
             {
-                string dir = Path.Combine(_raiz, "evidencia");
+                string dir = Rutas.Logs;
                 Directory.CreateDirectory(dir);
                 File.AppendAllText(Path.Combine(dir, "app.log"),
                     $"{DateTime.Now:O}  {s}{Environment.NewLine}");
@@ -1237,7 +1383,7 @@ private void CambiarEstado(EstadoDispositivo e, string texto, string accion)
         if (_sesion is not null)
         {
             try { await _sesion.DetenerAsync().ConfigureAwait(false); }
-            catch (Exception e) { Escribir("ERROR al cerrar: " + e.Message); }
+            catch (Exception e) { Escribir(Loc.T("log.error_cerrar", e.Message)); }
         }
 
         if (tomoOperacion) _operacion.Release();
@@ -1262,8 +1408,8 @@ public sealed class TemaInfo : INotifyPropertyChanged
 {
     private bool _seleccionado;
     public string Id { get; }
-    public string Nombre { get; }
-    public string Descripcion { get; }
+    public string Nombre => Loc.T("tema." + Id + ".nombre");
+    public string Descripcion => Loc.T("tema." + Id + ".descripcion");
     public bool EsOscuro { get; }
     public string MuestraFondo { get; }
     public string MuestraSuperficie { get; }
@@ -1289,11 +1435,17 @@ public sealed class TemaInfo : INotifyPropertyChanged
     public IBrush BrochaAcento => new SolidColorBrush(Color.Parse(MuestraAcento));
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public TemaInfo(string id, string nombre, string descripcion, bool oscuro, string muestraFondo, string muestraSuperficie, string muestraAcento,
+    public void Refrescar()
+    {
+        PropertyChanged?.Invoke(this, new(nameof(Nombre)));
+        PropertyChanged?.Invoke(this, new(nameof(Descripcion)));
+    }
+
+    public TemaInfo(string id, bool oscuro, string muestraFondo, string muestraSuperficie, string muestraAcento,
         string fondo, string marco, string lienzo, string tarjeta, string tarjetaHover, string tinta, string tintaSuave, string tintaTenue, string linea, string indigo,
         string boton, string botonHover, string botonTexto)
     {
-        Id=id; Nombre=nombre; Descripcion=descripcion; EsOscuro=oscuro; MuestraFondo=muestraFondo; MuestraSuperficie=muestraSuperficie; MuestraAcento=muestraAcento;
+        Id=id; EsOscuro=oscuro; MuestraFondo=muestraFondo; MuestraSuperficie=muestraSuperficie; MuestraAcento=muestraAcento;
         Fondo=fondo; Marco=marco; Lienzo=lienzo; Tarjeta=tarjeta; TarjetaHover=tarjetaHover; Tinta=tinta; TintaSuave=tintaSuave; TintaTenue=tintaTenue; Linea=linea; Indigo=indigo;
         BotonPrincipal=boton; BotonPrincipalHover=botonHover; BotonPrincipalTexto=botonTexto;
         Paleta = new() {

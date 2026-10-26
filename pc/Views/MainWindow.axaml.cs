@@ -40,6 +40,22 @@ public partial class MainWindow : Window
             () => this.FindControl<ScrollViewer>("LienzoScroll")?.ScrollToHome(),
             DispatcherPriority.Loaded);
 
+        var lienzoScroll = this.FindControl<ScrollViewer>("LienzoScroll");
+        var contenidoLienzo = this.FindControl<StackPanel>("ContenidoLienzo");
+        if (lienzoScroll is not null && contenidoLienzo is not null)
+        {
+            lienzoScroll.SizeChanged += (_, e) => CentrarLienzo(contenidoLienzo, lienzoScroll, e.NewSize.Width);
+            CentrarLienzo(contenidoLienzo, lienzoScroll, lienzoScroll.Bounds.Width);
+        }
+
+        var scrollConfig = this.FindControl<ScrollViewer>("ScrollConfiguracion");
+        var contenidoConfig = this.FindControl<StackPanel>("ContenidoConfiguracion");
+        if (scrollConfig is not null && contenidoConfig is not null)
+        {
+            scrollConfig.SizeChanged += (_, e) => CentrarLienzo(contenidoConfig, scrollConfig, e.NewSize.Width, 1080, 40, 28, 32);
+            CentrarLienzo(contenidoConfig, scrollConfig, scrollConfig.Bounds.Width, 1080, 40, 28, 32);
+        }
+
         if (_vm is not null)
         {
             _vm.LienzoCambiado += () => Dispatcher.UIThread.Post(() =>
@@ -55,6 +71,20 @@ public partial class MainWindow : Window
         AddHandler(InputElement.PointerExitedEvent, OnPointerExited,
                    RoutingStrategies.Tunnel, handledEventsToo: true);
         Deactivated += OnDeactivated;
+    }
+
+    /// <summary>
+    /// El contenido del lienzo debe medirse con ancho finito para que las columnas `*`
+    /// de la fila de tarjetas se repartan en partes iguales. Un panel alineado al centro
+    /// se mide con ancho infinito y degrada la grid a tamano natural, así que el panel
+    /// estira y aqui lo centramos con margen calculado.
+    /// </summary>
+    private static void CentrarLienzo(StackPanel contenido, ScrollViewer lienzo, double anchoControl,
+        double anchoMax = 1080, double margenMin = 44, double margenVertical = 6, double margenInferior = 24)
+    {
+        var disponible = lienzo.Viewport.Width > 1 ? lienzo.Viewport.Width : anchoControl;
+        var margen = Math.Max(margenMin, (disponible - anchoMax) / 2);
+        contenido.Margin = new Thickness(margen, margenVertical, margen, margenInferior);
     }
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
@@ -86,6 +116,9 @@ public partial class MainWindow : Window
     private async void OnCamara(object? s, RoutedEventArgs e) => await EjecutarAsync(() => _vm?.CambiarCamaraAsync() ?? Task.CompletedTask);
     private async void OnResolucion(object? s, SelectionChangedEventArgs e) => await EjecutarAsync(() => _vm?.AplicarResolucionAsync() ?? Task.CompletedTask);
     private void OnConfiguracion(object? s, RoutedEventArgs e) => _vm?.AlternarConfiguracion();
+    private void OnIdiomaEs(object? s, RoutedEventArgs e) => _vm?.CambiarIdioma("es");
+    private void OnIdiomaEn(object? s, RoutedEventArgs e) => _vm?.CambiarIdioma("en");
+    private void OnRepetirIntroduccion(object? s, RoutedEventArgs e) => _vm?.PedirOnboarding();
 
     private void OnPanelFicha(object? sender, RoutedEventArgs e)
     {
@@ -152,6 +185,6 @@ public partial class MainWindow : Window
     private async Task EjecutarAsync(Func<Task> accion)
     {
         try { await accion(); }
-        catch (Exception ex) { _vm?.Escribir("ERROR no controlado en la interfaz: " + ex); }
+        catch (Exception ex) { _vm?.Escribir(Loc.T("log.error_ui", ex)); }
     }
 }

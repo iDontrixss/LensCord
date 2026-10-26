@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
@@ -17,7 +18,31 @@ public class App : Application
         {
             var vm = new ViewModels.MainViewModel();
             var win = new Views.MainWindow { DataContext = vm };
-            desktop.MainWindow = win;
+
+            bool forzarIntro = desktop.Args?.Contains("--onboarding") == true;
+            if (vm.Config.OnboardingCompletado && !forzarIntro)
+            {
+                desktop.MainWindow = win;
+            }
+            else
+            {
+                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                var intro = new Views.OnboardingWindow(new ViewModels.OnboardingViewModel(vm));
+                desktop.MainWindow = intro;
+                intro.Closed += (_, _) =>
+                {
+                    desktop.ShutdownMode = ShutdownMode.OnLastWindowClose;
+                    desktop.MainWindow = win;
+                    win.Show();
+                };
+            }
+
+            vm.SolicitarOnboarding += () =>
+            {
+                if (!win.IsVisible) return;
+                var intro = new Views.OnboardingWindow(new ViewModels.OnboardingViewModel(vm));
+                _ = intro.ShowDialog(win);
+            };
 
             desktop.ShutdownRequested += (_, e) =>
             {
@@ -40,7 +65,7 @@ public class App : Application
         }
         catch (Exception e)
         {
-            Console.Error.WriteLine("Error al cerrar Lenscord: " + e);
+            Console.Error.WriteLine(Core.Loc.T("log.error_cerrar_app", e));
         }
         finally
         {

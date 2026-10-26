@@ -1,7 +1,7 @@
 # Lenscord - PROGRESO
 
 Proyecto: `C:\Lenscord` (Windows; codigo preparado para Linux/macOS)
-Actualizado: 2026-10-23
+Actualizado: 2026-10-25
 
 ## Estado actual
 
@@ -22,9 +22,10 @@ del sistema.
 | Pieza | Ruta |
 |---|---|
 | UI y sesion PC | `pc/` (.NET 9 + Avalonia 11) |
+| Pruebas | `pc.Tests/` (xUnit) |
 | Payload del celular | `dispositivo/src/com/lenscord/LenscordDevice.java` |
 | Dex compilado | `dispositivo/out/lenscord.dex` |
-| Build del dex | `dispositivo/build-dex.ps1` |
+| Build del dex | `dispositivo/build-dex.ps1` / `build-dex.sh` |
 | adb portable | `tools/android-sdk/platform-tools/adb.exe` |
 | Evidencia y logs | `evidencia/app.log`, `evidencia/stream.h264` |
 | Webcam virtual (MF) | `virtualcam/Source/`, `virtualcam/payload/` |
@@ -127,35 +128,37 @@ con el mismo protocolo que publica `pc/Core/VirtualCameraPublisher.cs`.
 ## Riesgos y limites conocidos
 
 - AppOps UID 1000 es un cambio temporal y amplio (UID del sistema compartido).
-  Un crash o force-kill puede dejar `CAMERA: ignore`; el siguiente inicio lo
-  detecta y lo limpia. La detencion normal lo restaura y reintenta por USB.
-- Un crash tambien puede dejar la pantalla con timeout maximo; la detencion
-  normal lo restaura.
+  Los valores originales de pantalla se guardan en
+  `%LocalAppData%\Lenscord\estado-telefono.json` antes de modificarlos y se
+  recuperan en el siguiente inicio si la app murio; el `ignore` de SmartFace
+  tambien se limpia al iniciar.
+- El payload se detiene solo si la PC cierra el canal de control, si falla el
+  hilo de video o si fallan 3 envios de control seguidos.
 - `sizes=[]` y `hwLevel=0` siguen sin explicacion; el fallback 720p funciona.
-- Zoom y selector de lente aun tienen deuda de Fase 4: el zoom de la UI no esta
-  sincronizado con `gZoomFrac`, el cambio de lente no siempre aplica y
-  `StreamEncoder.release()` no reinicia `alive`.
-- Faltan latches de un solo uso (`gAbierto`, `gConfigOk`, `gSesionOk`,
-  `gAperturaOk`) y resolucion dinamica.
+- Cambio de lente, formato y zoom reescritos (latches por intento, encoder nuevo
+  por reconfiguracion, rollback). Compilan pero **no se han probado con el
+  telefono**: repetir cambios de lente y resolucion seguidos.
+- Autenticacion por desafio HMAC-SHA256 y token por stdin/entorno (ya no viaja
+  en argv ni en la red). El video por Wi-Fi sigue sin cifrar.
 - Webcam virtual: filtro DirectShow verificado (30 fps, contenido real del
   telefono); falta la prueba end-to-end eligiendola en Discord.
-- Linux/macOS: no comprobados desde esta PC.
+- Linux: camara virtual por `v4l2loopback` + ffmpeg y `build-dex.sh`, sin
+  probar. macOS: sin camara virtual; app sin probar.
 - ADB por Wi-Fi deja el telefono accesible en la red; usar `Volver a USB` al
   terminar.
+- Cada frame se copia (`Clone`, 3,7 MB) antes de entregarse a la UI; un pool de
+  buffers reduciria la presion del GC.
+- Namespaces `VCamNetSampleSourceAOT` y csproj `iToPC.*` siguen con los nombres
+  de la plantilla original (ver `THIRD_PARTY_NOTICES.md`).
 
 ## Proximos pasos
 
-1. Cerrar Fase 4 del payload: latches, `release()` que reinicie `alive`, zoom y
-   selector de lente.
-2. Probar la camara `Lenscord` en Discord (Discord solo enumera DirectShow en
-   Windows): elegirla en Configuracion -> Video con la sesion del telefono
-   activa y confirmar frames reales a ~30 fps.
-3. Instalar end-to-end con `install-vcam.ps1` y repetir la prueba en Discord
-   con la DLL desde Program Files.
-4. Probar publicacion en Linux/macOS.
-5. Repetir una sesion larga por Wi-Fi con la pantalla encendida y medir latencia
-   frente a USB.
-
+1. Probar con el telefono: iniciar/detener por USB y Wi-Fi, matar la app a mitad
+   de sesion, cambiar lente y resolucion varias veces.
+2. Probar la camara `Lenscord` en Discord con la sesion del telefono activa.
+3. Instalar end-to-end con `install-vcam.ps1` y con el instalador de `release/`.
+4. Probar en Linux (v4l2loopback) y macOS.
+5. Repetir una sesion larga por Wi-Fi y medir latencia frente a USB.
 ## Como probar
 
 1. Ejecutar `pc\bin\Release\net9.0\Lenscord.exe`.

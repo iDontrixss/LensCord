@@ -1,0 +1,966 @@
+diff --git a/deps/libdshowcapture/CMakeLists.txt b/deps/libdshowcapture/CMakeLists.txt
+index 2e04053..a929f53 100644
+--- a/deps/libdshowcapture/CMakeLists.txt
++++ b/deps/libdshowcapture/CMakeLists.txt
+@@ -6,7 +6,6 @@ target_sources(
+   INTERFACE src/dshowcapture.hpp
+             src/source/capture-filter.cpp
+             src/source/capture-filter.hpp
+-            src/source/device-vendor.cpp
+             src/source/device.cpp
+             src/source/device.hpp
+             src/source/dshow-base.cpp
+@@ -30,10 +29,7 @@ target_sources(
+             src/source/log.hpp
+             src/source/output-filter.cpp
+             src/source/output-filter.hpp
+-            src/external/capture-device-support/Library/EGAVResult.cpp
+-            src/external/capture-device-support/Library/ElgatoUVCDevice.cpp
+-            src/external/capture-device-support/Library/win/EGAVHIDImplementation.cpp
+-            src/external/capture-device-support/SampleCode/DriverInterface.cpp)
++            )
+ 
+ target_include_directories(
+   libdshowcapture INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+diff --git a/plugins/win-dshow/shared-memory-queue.c b/plugins/win-dshow/shared-memory-queue.c
+index 2a6b6cb..6356d94 100644
+--- a/plugins/win-dshow/shared-memory-queue.c
++++ b/plugins/win-dshow/shared-memory-queue.c
+@@ -1,218 +1,217 @@
+ #include <windows.h>
++#include <shlobj.h>
++#include <strsafe.h>
++#include <stdlib.h>
++#include <string.h>
++
+ #include "shared-memory-queue.h"
+ #include "tiny-nv12-scale.h"
+ 
+-#define VIDEO_NAME L"OBSVirtualCamVideo"
+-
+-enum queue_type {
+-	SHARED_QUEUE_TYPE_VIDEO,
+-};
+-
+-struct queue_header {
+-	volatile uint32_t write_idx;
+-	volatile uint32_t read_idx;
+-	volatile uint32_t state;
+-
+-	uint32_t offsets[3];
+-
+-	uint32_t type;
+-
+-	uint32_t cx;
+-	uint32_t cy;
+-	uint64_t interval;
+-
+-	uint32_t reserved[8];
+-};
++/* Lenscord's existing producer publishes a two-slot NV12 file mapping. Keep
++ * the OBS DirectShow OutputFilter unchanged and adapt only its queue reader. */
++#define LENSCORD_MAGIC 0x46534E4C /* "LNSF" */
++#define LENSCORD_VERSION 1
++#define LENSCORD_WIDTH 1280
++#define LENSCORD_HEIGHT 720
++#define LENSCORD_FRAME_SIZE (LENSCORD_WIDTH * LENSCORD_HEIGHT * 3 / 2)
++#define LENSCORD_HEADER_SIZE 4096
+ 
+ struct video_queue {
+-	HANDLE handle;
++	HANDLE file;
++	HANDLE mapping;
++	uint8_t *view;
++	uint8_t *last_frame;
++	uint64_t last_sequence;
++	ULONGLONG last_change_ms;
++	int duplicate_count;
+ 	bool ready_to_read;
+-	struct queue_header *header;
+-	uint64_t *ts[3];
+-	uint8_t *frame[3];
+-	long last_inc;
+-	int dup_counter;
+-	bool is_writer;
+ };
+ 
+-#define ALIGN_SIZE(size, align) size = (((size) + (align - 1)) & (~(align - 1)))
+-#define FRAME_HEADER_SIZE 32
+-
+-video_queue_t *video_queue_create(uint32_t cx, uint32_t cy, uint64_t interval)
++static bool valid_header(const uint8_t *view)
+ {
+-	struct video_queue vq = {0};
+-	struct video_queue *pvq;
+-	DWORD frame_size = cx * cy * 3 / 2;
+-	uint32_t offset_frame[3];
+-	DWORD size;
+-
+-	size = sizeof(struct queue_header);
+-
+-	ALIGN_SIZE(size, 32);
+-
+-	offset_frame[0] = size;
+-	size += frame_size + FRAME_HEADER_SIZE;
+-	ALIGN_SIZE(size, 32);
+-
+-	offset_frame[1] = size;
+-	size += frame_size + FRAME_HEADER_SIZE;
+-	ALIGN_SIZE(size, 32);
+-
+-	offset_frame[2] = size;
+-	size += frame_size + FRAME_HEADER_SIZE;
+-	ALIGN_SIZE(size, 32);
++	const volatile LONG *fields = (const volatile LONG *)view;
++	return (uint32_t)fields[0] == LENSCORD_MAGIC && fields[1] == LENSCORD_VERSION &&
++	       fields[2] == LENSCORD_WIDTH && fields[3] == LENSCORD_HEIGHT &&
++	       fields[4] == LENSCORD_FRAME_SIZE;
++}
+ 
+-	struct queue_header header = {0};
++static uint64_t read_sequence(const uint8_t *view)
++{
++	/* The mapping is deliberately opened FILE_MAP_READ. InterlockedCompareExchange
++	 * is a read-modify-write operation, even when the replacement equals the
++	 * current value, so using it on this page can fault inside the host process.
++	 * The field is 8-byte aligned and this module is built for x64; a volatile
++	 * load is atomic and does not request write access to the mapped page. */
++	MemoryBarrier();
++	uint64_t sequence = *(const volatile uint64_t *)(view + 24);
++	MemoryBarrier();
++	return sequence;
++}
+ 
+-	header.state = SHARED_QUEUE_STATE_STARTING;
+-	header.cx = cx;
+-	header.cy = cy;
+-	header.interval = interval;
+-	vq.is_writer = true;
++static LONG read_active_slot(const uint8_t *view)
++{
++	/* Same rule as read_sequence: this is a read-only mapped view. */
++	MemoryBarrier();
++	LONG slot = *(const volatile LONG *)(view + 20);
++	MemoryBarrier();
++	return slot;
++}
+ 
+-	for (size_t i = 0; i < 3; i++) {
+-		uint32_t off = offset_frame[i];
+-		header.offsets[i] = off;
+-	}
++video_queue_t *video_queue_create(uint32_t cx, uint32_t cy, uint64_t interval)
++{
++	UNREFERENCED_PARAMETER(cx);
++	UNREFERENCED_PARAMETER(cy);
++	UNREFERENCED_PARAMETER(interval);
++	return NULL; /* Lenscord is the producer; this fork is a DirectShow reader. */
++}
+ 
+-	/* fail if already in use */
+-	vq.handle = OpenFileMappingW(FILE_MAP_READ, false, VIDEO_NAME);
+-	if (vq.handle) {
+-		CloseHandle(vq.handle);
++video_queue_t *video_queue_open(void)
++{
++	wchar_t path[MAX_PATH] = {};
++	if (FAILED(SHGetFolderPathW(NULL, CSIDL_COMMON_APPDATA, NULL, SHGFP_TYPE_CURRENT, path)) ||
++	    FAILED(StringCchCatW(path, MAX_PATH, L"\\Lenscord\\frames.nv12")))
+ 		return NULL;
+-	}
+ 
+-	vq.handle = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, size, VIDEO_NAME);
+-	if (!vq.handle) {
++	HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++				  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++	if (file == INVALID_HANDLE_VALUE)
+ 		return NULL;
+-	}
+ 
+-	vq.header = (struct queue_header *)MapViewOfFile(vq.handle, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+-	if (!vq.header) {
+-		CloseHandle(vq.handle);
++	LARGE_INTEGER length = {};
++	if (!GetFileSizeEx(file, &length) || length.QuadPart < LENSCORD_HEADER_SIZE + 2LL * LENSCORD_FRAME_SIZE) {
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+-	memcpy(vq.header, &header, sizeof(header));
+ 
+-	for (size_t i = 0; i < 3; i++) {
+-		uint32_t off = offset_frame[i];
+-		vq.ts[i] = (uint64_t *)(((uint8_t *)vq.header) + off);
+-		vq.frame[i] = ((uint8_t *)vq.header) + off + FRAME_HEADER_SIZE;
+-	}
+-	pvq = malloc(sizeof(vq));
+-	if (!pvq) {
+-		CloseHandle(vq.handle);
++	HANDLE mapping = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, NULL);
++	if (!mapping) {
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+-	memcpy(pvq, &vq, sizeof(vq));
+-	return pvq;
+-}
+-
+-video_queue_t *video_queue_open()
+-{
+-	struct video_queue vq = {0};
+ 
+-	vq.handle = OpenFileMappingW(FILE_MAP_READ, false, VIDEO_NAME);
+-	if (!vq.handle) {
++	uint8_t *view = (uint8_t *)MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
++	if (!view || !valid_header(view)) {
++		if (view)
++			UnmapViewOfFile(view);
++		CloseHandle(mapping);
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+ 
+-	vq.header = (struct queue_header *)MapViewOfFile(vq.handle, FILE_MAP_READ, 0, 0, 0);
+-	if (!vq.header) {
+-		CloseHandle(vq.handle);
++	video_queue_t *vq = (video_queue_t *)calloc(1, sizeof(*vq));
++	if (!vq) {
++		UnmapViewOfFile(view);
++		CloseHandle(mapping);
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+ 
+-	struct video_queue *pvq = malloc(sizeof(vq));
+-	if (!pvq) {
+-		CloseHandle(vq.handle);
++	vq->last_frame = (uint8_t *)malloc(LENSCORD_FRAME_SIZE);
++	if (!vq->last_frame) {
++		free(vq);
++		UnmapViewOfFile(view);
++		CloseHandle(mapping);
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+-	memcpy(pvq, &vq, sizeof(vq));
+-	return pvq;
++
++	vq->file = file;
++	vq->mapping = mapping;
++	vq->view = view;
++	vq->last_change_ms = GetTickCount64();
++	return vq;
+ }
+ 
+ void video_queue_close(video_queue_t *vq)
+ {
+-	if (!vq) {
++	if (!vq)
+ 		return;
+-	}
+-	if (vq->is_writer) {
+-		vq->header->state = SHARED_QUEUE_STATE_STOPPING;
+-	}
+-
+-	UnmapViewOfFile(vq->header);
+-	CloseHandle(vq->handle);
++	if (vq->view)
++		UnmapViewOfFile(vq->view);
++	if (vq->mapping)
++		CloseHandle(vq->mapping);
++	if (vq->file && vq->file != INVALID_HANDLE_VALUE)
++		CloseHandle(vq->file);
++	free(vq->last_frame);
+ 	free(vq);
+ }
+ 
+ void video_queue_get_info(video_queue_t *vq, uint32_t *cx, uint32_t *cy, uint64_t *interval)
+ {
+-	struct queue_header *qh = vq->header;
+-	*cx = qh->cx;
+-	*cy = qh->cy;
+-	*interval = qh->interval;
+-}
+-
+-#define get_idx(inc) ((unsigned long)inc % 3)
+-
+-void video_queue_write(video_queue_t *vq, uint8_t **data, uint32_t *linesize, uint64_t timestamp)
+-{
+-	struct queue_header *qh = vq->header;
+-	long inc = ++qh->write_idx;
+-
+-	unsigned long idx = get_idx(inc);
+-	size_t size = linesize[0] * qh->cy;
+-
+-	*vq->ts[idx] = timestamp;
+-	memcpy(vq->frame[idx], data[0], size);
+-	memcpy(vq->frame[idx] + size, data[1], size / 2);
+-
+-	qh->read_idx = inc;
+-	qh->state = SHARED_QUEUE_STATE_READY;
++	UNREFERENCED_PARAMETER(vq);
++	if (cx)
++		*cx = LENSCORD_WIDTH;
++	if (cy)
++		*cy = LENSCORD_HEIGHT;
++	if (interval)
++		*interval = 10000000ULL / 30;
+ }
+ 
+ enum queue_state video_queue_state(video_queue_t *vq)
+ {
+-	if (!vq) {
++	if (!vq || !vq->view || !valid_header(vq->view))
+ 		return SHARED_QUEUE_STATE_INVALID;
+-	}
+ 
+-	enum queue_state state = (enum queue_state)vq->header->state;
+-	if (!vq->ready_to_read && state == SHARED_QUEUE_STATE_READY) {
+-		for (size_t i = 0; i < 3; i++) {
+-			size_t off = vq->header->offsets[i];
+-			vq->ts[i] = (uint64_t *)(((uint8_t *)vq->header) + off);
+-			vq->frame[i] = ((uint8_t *)vq->header) + off + FRAME_HEADER_SIZE;
+-		}
+-		vq->ready_to_read = true;
++	uint64_t sequence = read_sequence(vq->view);
++	if (!sequence)
++		return SHARED_QUEUE_STATE_STARTING;
++
++	if (sequence != vq->last_sequence) {
++		vq->last_sequence = sequence;
++		vq->last_change_ms = GetTickCount64();
++		vq->duplicate_count = 0;
+ 	}
+ 
+-	return state;
++	/* The producer may leave the mapping on disk after Lenscord stops. Treat a
++	 * stale stream as stopped so the OBS filter returns its normal placeholder. */
++	if (GetTickCount64() - vq->last_change_ms > 1500)
++		return SHARED_QUEUE_STATE_STARTING;
++
++	if (!vq->ready_to_read)
++		vq->ready_to_read = true;
++	return SHARED_QUEUE_STATE_READY;
+ }
+ 
+ bool video_queue_read(video_queue_t *vq, nv12_scale_t *scale, void *dst, uint64_t *ts)
+ {
+-	struct queue_header *qh = vq->header;
+-	long inc = qh->read_idx;
+-
+-	if (qh->state == SHARED_QUEUE_STATE_STOPPING) {
++	UNREFERENCED_PARAMETER(ts);
++	if (!vq || !vq->view || !scale || !dst || !valid_header(vq->view))
+ 		return false;
+-	}
+ 
+-	if (inc == vq->last_inc) {
+-		if (++vq->dup_counter == 10) {
++	uint64_t sequence = 0;
++	bool copied = false;
++	for (int attempt = 0; attempt < 3; attempt++) {
++		uint64_t before = read_sequence(vq->view);
++		if (!before)
++			return false;
++
++		LONG slot = read_active_slot(vq->view);
++		if (slot < 0 || slot > 1)
+ 			return false;
++
++		MemoryBarrier();
++		const uint8_t *source = vq->view + LENSCORD_HEADER_SIZE + slot * LENSCORD_FRAME_SIZE;
++		memcpy(vq->last_frame, source, LENSCORD_FRAME_SIZE);
++		MemoryBarrier();
++		uint64_t after = read_sequence(vq->view);
++		if (before == after) {
++			sequence = after;
++			copied = true;
++			break;
+ 		}
+-	} else {
+-		vq->dup_counter = 0;
+-		vq->last_inc = inc;
+ 	}
+ 
+-	unsigned long idx = get_idx(inc);
+-
+-	*ts = *vq->ts[idx];
++	if (!copied)
++		return false;
++	if (sequence == vq->last_sequence) {
++		if (++vq->duplicate_count >= 10)
++			return false;
++	} else {
++		vq->last_sequence = sequence;
++		vq->last_change_ms = GetTickCount64();
++		vq->duplicate_count = 0;
++	}
+ 
+-	nv12_do_scale(scale, dst, vq->frame[idx]);
++	nv12_do_scale(scale, dst, vq->last_frame);
+ 	return true;
+ }
+diff --git a/plugins/win-dshow/virtualcam-module/CMakeLists.txt b/plugins/win-dshow/virtualcam-module/CMakeLists.txt
+index 87cda18..c7826f0 100644
+--- a/plugins/win-dshow/virtualcam-module/CMakeLists.txt
++++ b/plugins/win-dshow/virtualcam-module/CMakeLists.txt
+@@ -8,8 +8,7 @@ if(NOT ENABLE_VIRTUALCAM)
+ endif()
+ 
+ if(NOT VIRTUALCAM_GUID)
+-  set(VIRTUALCAM_GUID "" CACHE STRING "Virtual Camera GUID" FORCE)
+-  mark_as_advanced(VIRTUALCAM_GUID)
++	set(VIRTUALCAM_GUID "5B1F6468-8F22-4A63-B38C-27357AE6D492" CACHE STRING "Lenscord DirectShow Virtual Camera GUID" FORCE)
+ 
+   message(WARNING "Empty Virtual Camera GUID set.")
+   target_disable_feature(obs-virtualcam-module "Virtual Camera Support (empty GUID)")
+@@ -80,6 +79,7 @@ target_sources(
+   PRIVATE
+     ${CMAKE_CURRENT_BINARY_DIR}/virtualcam-module.rc
+     placeholder.cpp
++    lenscord-no-vendor-device.cpp
+     sleepto.c
+     sleepto.h
+     virtualcam-filter.cpp
+@@ -102,30 +102,10 @@ target_link_libraries(
+     gdiplus
+     strmiids
+     winmm
++    setupapi
++    cfgmgr32
+ )
+ 
+-if(OBS_PARENT_ARCHITECTURE STREQUAL CMAKE_VS_PLATFORM_NAME)
+-  if(CMAKE_VS_PLATFORM_NAME STREQUAL ARM64)
+-    add_custom_command(
+-      TARGET obs-virtualcam-module
+-      POST_BUILD
+-      COMMAND "${CMAKE_COMMAND}" --build ${CMAKE_SOURCE_DIR}/build_x64 --config $<CONFIG> -t obs-virtualcam-module
+-      COMMENT "Build x64 obs-virtualcam-module"
+-    )
+-  endif()
+-
+-  if(CMAKE_VS_PLATFORM_NAME MATCHES "(ARM64|x64)")
+-    add_custom_command(
+-      TARGET obs-virtualcam-module
+-      POST_BUILD
+-      COMMAND "${CMAKE_COMMAND}" --build ${CMAKE_SOURCE_DIR}/build_x86 --config $<CONFIG> -t obs-virtualcam-module
+-      COMMENT "Build x86 obs-virtualcam-module"
+-    )
+-  endif()
+-
+-  add_dependencies(win-dshow obs-virtualcam-module)
+-endif()
+-
+ if(CMAKE_VS_PLATFORM_NAME STREQUAL ARM64)
+   set(_OUTPUT_NAME virtualcam-module-arm64)
+ elseif(CMAKE_VS_PLATFORM_NAME STREQUAL x64)
+@@ -136,19 +116,9 @@ endif()
+ 
+ target_sources(obs-virtualcam-module PRIVATE cmake/windows/${_OUTPUT_NAME}.def)
+ 
+-configure_file(virtualcam-install.bat.in virtualcam-install.bat)
+-target_add_resource(obs-virtualcam-module "${CMAKE_CURRENT_BINARY_DIR}/virtualcam-install.bat"
+-                    "${OBS_PLUGIN_DESTINATION}/win-dshow/data"
+-)
+-
+-configure_file(virtualcam-uninstall.bat.in virtualcam-uninstall.bat)
+-target_add_resource(obs-virtualcam-module "${CMAKE_CURRENT_BINARY_DIR}/virtualcam-uninstall.bat"
+-                    "${OBS_PLUGIN_DESTINATION}/win-dshow/data"
+-)
+-
+-set_target_properties_obs(
++set_target_properties(
+   obs-virtualcam-module PROPERTIES
+-                        FOLDER plugins/win-dshow
+-                        OUTPUT_NAME obs-${_OUTPUT_NAME}
+-                        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
++  FOLDER plugins/win-dshow
++  OUTPUT_NAME Lenscord.VirtualCamera.DShow
++  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+ )
+diff --git a/plugins/win-dshow/virtualcam-module/cmake/windows/obs-module.rc.in b/plugins/win-dshow/virtualcam-module/cmake/windows/obs-module.rc.in
+index c5788b2..77e85e2 100644
+--- a/plugins/win-dshow/virtualcam-module/cmake/windows/obs-module.rc.in
++++ b/plugins/win-dshow/virtualcam-module/cmake/windows/obs-module.rc.in
+@@ -5,10 +5,10 @@ BEGIN
+   BEGIN
+     BLOCK "040904B0"
+     BEGIN
+-      VALUE "CompanyName", "${OBS_COMPANY_NAME}"
+-      VALUE "FileDescription", "OBS Virtual Camera output module"
++      VALUE "CompanyName", "Lenscord"
++      VALUE "FileDescription", "Lenscord DirectShow Virtual Camera"
+       VALUE "FileVersion", "${OBS_VERSION_CANONICAL}"
+-      VALUE "ProductName", "${OBS_PRODUCT_NAME}"
++      VALUE "ProductName", "Lenscord"
+       VALUE "ProductVersion", "${OBS_VERSION_CANONICAL}"
+       VALUE "Comments", "${OBS_COMMENTS}"
+       VALUE "LegalCopyright", "${OBS_LEGAL_COPYRIGHT}"
+diff --git a/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module-arm64.def b/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module-arm64.def
+index 6a907ee..5927aaf 100644
+--- a/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module-arm64.def
++++ b/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module-arm64.def
+@@ -1,4 +1,4 @@
+-LIBRARY     obs-virtualcam-module-arm64.dll
++LIBRARY     Lenscord.VirtualCamera.DShow.dll
+ EXPORTS
+             DllMain                 PRIVATE
+             DllGetClassObject       PRIVATE
+diff --git a/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module32.def b/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module32.def
+index d6b2256..5927aaf 100644
+--- a/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module32.def
++++ b/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module32.def
+@@ -1,4 +1,4 @@
+-LIBRARY     obs-virtualcam-module32.dll
++LIBRARY     Lenscord.VirtualCamera.DShow.dll
+ EXPORTS
+             DllMain                 PRIVATE
+             DllGetClassObject       PRIVATE
+diff --git a/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module64.def b/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module64.def
+index 034c9fa..5927aaf 100644
+--- a/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module64.def
++++ b/plugins/win-dshow/virtualcam-module/cmake/windows/virtualcam-module64.def
+@@ -1,4 +1,4 @@
+-LIBRARY     obs-virtualcam-module64.dll
++LIBRARY     Lenscord.VirtualCamera.DShow.dll
+ EXPORTS
+             DllMain                 PRIVATE
+             DllGetClassObject       PRIVATE
+diff --git a/plugins/win-dshow/virtualcam-module/virtualcam-filter.cpp b/plugins/win-dshow/virtualcam-module/virtualcam-filter.cpp
+index b39a91b..066ec36 100644
+--- a/plugins/win-dshow/virtualcam-module/virtualcam-filter.cpp
++++ b/plugins/win-dshow/virtualcam-module/virtualcam-filter.cpp
+@@ -116,7 +116,7 @@ VCamFilter::~VCamFilter()
+ 
+ const wchar_t *VCamFilter::FilterName() const
+ {
+-	return L"VCamFilter";
++	return L"Lenscord Virtual Camera";
+ }
+ 
+ STDMETHODIMP VCamFilter::Pause()
+diff --git a/plugins/win-dshow/virtualcam-module/virtualcam-module.cpp b/plugins/win-dshow/virtualcam-module/virtualcam-module.cpp
+index 23e0ee4..b7cf347 100644
+--- a/plugins/win-dshow/virtualcam-module/virtualcam-module.cpp
++++ b/plugins/win-dshow/virtualcam-module/virtualcam-module.cpp
+@@ -159,7 +159,7 @@ static bool RegServers(bool reg)
+ 	}
+ 
+ 	if (reg) {
+-		return RegServer(CLSID_OBS_VirtualVideo, L"OBS Virtual Camera", file);
++		return RegServer(CLSID_OBS_VirtualVideo, L"Lenscord Virtual Camera", file);
+ 	} else {
+ 		return UnregServer(CLSID_OBS_VirtualVideo);
+ 	}
+@@ -183,7 +183,7 @@ static bool RegFilters(bool reg)
+ 		rf2.cPins = 1;
+ 		rf2.rgPins = &AMSPinVideo;
+ 
+-		hr = fm->RegisterFilter(CLSID_OBS_VirtualVideo, L"OBS Virtual Camera", &moniker,
++		hr = fm->RegisterFilter(CLSID_OBS_VirtualVideo, L"Lenscord Virtual Camera", &moniker,
+ 					&CLSID_VideoInputDeviceCategory, nullptr, &rf2);
+ 		if (FAILED(hr)) {
+ 			return false;
+diff --git a/shared/obs-shared-memory-queue/shared-memory-queue.c b/shared/obs-shared-memory-queue/shared-memory-queue.c
+index 2a6b6cb..6356d94 100644
+--- a/shared/obs-shared-memory-queue/shared-memory-queue.c
++++ b/shared/obs-shared-memory-queue/shared-memory-queue.c
+@@ -1,218 +1,217 @@
+ #include <windows.h>
++#include <shlobj.h>
++#include <strsafe.h>
++#include <stdlib.h>
++#include <string.h>
++
+ #include "shared-memory-queue.h"
+ #include "tiny-nv12-scale.h"
+ 
+-#define VIDEO_NAME L"OBSVirtualCamVideo"
+-
+-enum queue_type {
+-	SHARED_QUEUE_TYPE_VIDEO,
+-};
+-
+-struct queue_header {
+-	volatile uint32_t write_idx;
+-	volatile uint32_t read_idx;
+-	volatile uint32_t state;
+-
+-	uint32_t offsets[3];
+-
+-	uint32_t type;
+-
+-	uint32_t cx;
+-	uint32_t cy;
+-	uint64_t interval;
+-
+-	uint32_t reserved[8];
+-};
++/* Lenscord's existing producer publishes a two-slot NV12 file mapping. Keep
++ * the OBS DirectShow OutputFilter unchanged and adapt only its queue reader. */
++#define LENSCORD_MAGIC 0x46534E4C /* "LNSF" */
++#define LENSCORD_VERSION 1
++#define LENSCORD_WIDTH 1280
++#define LENSCORD_HEIGHT 720
++#define LENSCORD_FRAME_SIZE (LENSCORD_WIDTH * LENSCORD_HEIGHT * 3 / 2)
++#define LENSCORD_HEADER_SIZE 4096
+ 
+ struct video_queue {
+-	HANDLE handle;
++	HANDLE file;
++	HANDLE mapping;
++	uint8_t *view;
++	uint8_t *last_frame;
++	uint64_t last_sequence;
++	ULONGLONG last_change_ms;
++	int duplicate_count;
+ 	bool ready_to_read;
+-	struct queue_header *header;
+-	uint64_t *ts[3];
+-	uint8_t *frame[3];
+-	long last_inc;
+-	int dup_counter;
+-	bool is_writer;
+ };
+ 
+-#define ALIGN_SIZE(size, align) size = (((size) + (align - 1)) & (~(align - 1)))
+-#define FRAME_HEADER_SIZE 32
+-
+-video_queue_t *video_queue_create(uint32_t cx, uint32_t cy, uint64_t interval)
++static bool valid_header(const uint8_t *view)
+ {
+-	struct video_queue vq = {0};
+-	struct video_queue *pvq;
+-	DWORD frame_size = cx * cy * 3 / 2;
+-	uint32_t offset_frame[3];
+-	DWORD size;
+-
+-	size = sizeof(struct queue_header);
+-
+-	ALIGN_SIZE(size, 32);
+-
+-	offset_frame[0] = size;
+-	size += frame_size + FRAME_HEADER_SIZE;
+-	ALIGN_SIZE(size, 32);
+-
+-	offset_frame[1] = size;
+-	size += frame_size + FRAME_HEADER_SIZE;
+-	ALIGN_SIZE(size, 32);
+-
+-	offset_frame[2] = size;
+-	size += frame_size + FRAME_HEADER_SIZE;
+-	ALIGN_SIZE(size, 32);
++	const volatile LONG *fields = (const volatile LONG *)view;
++	return (uint32_t)fields[0] == LENSCORD_MAGIC && fields[1] == LENSCORD_VERSION &&
++	       fields[2] == LENSCORD_WIDTH && fields[3] == LENSCORD_HEIGHT &&
++	       fields[4] == LENSCORD_FRAME_SIZE;
++}
+ 
+-	struct queue_header header = {0};
++static uint64_t read_sequence(const uint8_t *view)
++{
++	/* The mapping is deliberately opened FILE_MAP_READ. InterlockedCompareExchange
++	 * is a read-modify-write operation, even when the replacement equals the
++	 * current value, so using it on this page can fault inside the host process.
++	 * The field is 8-byte aligned and this module is built for x64; a volatile
++	 * load is atomic and does not request write access to the mapped page. */
++	MemoryBarrier();
++	uint64_t sequence = *(const volatile uint64_t *)(view + 24);
++	MemoryBarrier();
++	return sequence;
++}
+ 
+-	header.state = SHARED_QUEUE_STATE_STARTING;
+-	header.cx = cx;
+-	header.cy = cy;
+-	header.interval = interval;
+-	vq.is_writer = true;
++static LONG read_active_slot(const uint8_t *view)
++{
++	/* Same rule as read_sequence: this is a read-only mapped view. */
++	MemoryBarrier();
++	LONG slot = *(const volatile LONG *)(view + 20);
++	MemoryBarrier();
++	return slot;
++}
+ 
+-	for (size_t i = 0; i < 3; i++) {
+-		uint32_t off = offset_frame[i];
+-		header.offsets[i] = off;
+-	}
++video_queue_t *video_queue_create(uint32_t cx, uint32_t cy, uint64_t interval)
++{
++	UNREFERENCED_PARAMETER(cx);
++	UNREFERENCED_PARAMETER(cy);
++	UNREFERENCED_PARAMETER(interval);
++	return NULL; /* Lenscord is the producer; this fork is a DirectShow reader. */
++}
+ 
+-	/* fail if already in use */
+-	vq.handle = OpenFileMappingW(FILE_MAP_READ, false, VIDEO_NAME);
+-	if (vq.handle) {
+-		CloseHandle(vq.handle);
++video_queue_t *video_queue_open(void)
++{
++	wchar_t path[MAX_PATH] = {};
++	if (FAILED(SHGetFolderPathW(NULL, CSIDL_COMMON_APPDATA, NULL, SHGFP_TYPE_CURRENT, path)) ||
++	    FAILED(StringCchCatW(path, MAX_PATH, L"\\Lenscord\\frames.nv12")))
+ 		return NULL;
+-	}
+ 
+-	vq.handle = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, size, VIDEO_NAME);
+-	if (!vq.handle) {
++	HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++				  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++	if (file == INVALID_HANDLE_VALUE)
+ 		return NULL;
+-	}
+ 
+-	vq.header = (struct queue_header *)MapViewOfFile(vq.handle, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+-	if (!vq.header) {
+-		CloseHandle(vq.handle);
++	LARGE_INTEGER length = {};
++	if (!GetFileSizeEx(file, &length) || length.QuadPart < LENSCORD_HEADER_SIZE + 2LL * LENSCORD_FRAME_SIZE) {
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+-	memcpy(vq.header, &header, sizeof(header));
+ 
+-	for (size_t i = 0; i < 3; i++) {
+-		uint32_t off = offset_frame[i];
+-		vq.ts[i] = (uint64_t *)(((uint8_t *)vq.header) + off);
+-		vq.frame[i] = ((uint8_t *)vq.header) + off + FRAME_HEADER_SIZE;
+-	}
+-	pvq = malloc(sizeof(vq));
+-	if (!pvq) {
+-		CloseHandle(vq.handle);
++	HANDLE mapping = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, NULL);
++	if (!mapping) {
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+-	memcpy(pvq, &vq, sizeof(vq));
+-	return pvq;
+-}
+-
+-video_queue_t *video_queue_open()
+-{
+-	struct video_queue vq = {0};
+ 
+-	vq.handle = OpenFileMappingW(FILE_MAP_READ, false, VIDEO_NAME);
+-	if (!vq.handle) {
++	uint8_t *view = (uint8_t *)MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
++	if (!view || !valid_header(view)) {
++		if (view)
++			UnmapViewOfFile(view);
++		CloseHandle(mapping);
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+ 
+-	vq.header = (struct queue_header *)MapViewOfFile(vq.handle, FILE_MAP_READ, 0, 0, 0);
+-	if (!vq.header) {
+-		CloseHandle(vq.handle);
++	video_queue_t *vq = (video_queue_t *)calloc(1, sizeof(*vq));
++	if (!vq) {
++		UnmapViewOfFile(view);
++		CloseHandle(mapping);
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+ 
+-	struct video_queue *pvq = malloc(sizeof(vq));
+-	if (!pvq) {
+-		CloseHandle(vq.handle);
++	vq->last_frame = (uint8_t *)malloc(LENSCORD_FRAME_SIZE);
++	if (!vq->last_frame) {
++		free(vq);
++		UnmapViewOfFile(view);
++		CloseHandle(mapping);
++		CloseHandle(file);
+ 		return NULL;
+ 	}
+-	memcpy(pvq, &vq, sizeof(vq));
+-	return pvq;
++
++	vq->file = file;
++	vq->mapping = mapping;
++	vq->view = view;
++	vq->last_change_ms = GetTickCount64();
++	return vq;
+ }
+ 
+ void video_queue_close(video_queue_t *vq)
+ {
+-	if (!vq) {
++	if (!vq)
+ 		return;
+-	}
+-	if (vq->is_writer) {
+-		vq->header->state = SHARED_QUEUE_STATE_STOPPING;
+-	}
+-
+-	UnmapViewOfFile(vq->header);
+-	CloseHandle(vq->handle);
++	if (vq->view)
++		UnmapViewOfFile(vq->view);
++	if (vq->mapping)
++		CloseHandle(vq->mapping);
++	if (vq->file && vq->file != INVALID_HANDLE_VALUE)
++		CloseHandle(vq->file);
++	free(vq->last_frame);
+ 	free(vq);
+ }
+ 
+ void video_queue_get_info(video_queue_t *vq, uint32_t *cx, uint32_t *cy, uint64_t *interval)
+ {
+-	struct queue_header *qh = vq->header;
+-	*cx = qh->cx;
+-	*cy = qh->cy;
+-	*interval = qh->interval;
+-}
+-
+-#define get_idx(inc) ((unsigned long)inc % 3)
+-
+-void video_queue_write(video_queue_t *vq, uint8_t **data, uint32_t *linesize, uint64_t timestamp)
+-{
+-	struct queue_header *qh = vq->header;
+-	long inc = ++qh->write_idx;
+-
+-	unsigned long idx = get_idx(inc);
+-	size_t size = linesize[0] * qh->cy;
+-
+-	*vq->ts[idx] = timestamp;
+-	memcpy(vq->frame[idx], data[0], size);
+-	memcpy(vq->frame[idx] + size, data[1], size / 2);
+-
+-	qh->read_idx = inc;
+-	qh->state = SHARED_QUEUE_STATE_READY;
++	UNREFERENCED_PARAMETER(vq);
++	if (cx)
++		*cx = LENSCORD_WIDTH;
++	if (cy)
++		*cy = LENSCORD_HEIGHT;
++	if (interval)
++		*interval = 10000000ULL / 30;
+ }
+ 
+ enum queue_state video_queue_state(video_queue_t *vq)
+ {
+-	if (!vq) {
++	if (!vq || !vq->view || !valid_header(vq->view))
+ 		return SHARED_QUEUE_STATE_INVALID;
+-	}
+ 
+-	enum queue_state state = (enum queue_state)vq->header->state;
+-	if (!vq->ready_to_read && state == SHARED_QUEUE_STATE_READY) {
+-		for (size_t i = 0; i < 3; i++) {
+-			size_t off = vq->header->offsets[i];
+-			vq->ts[i] = (uint64_t *)(((uint8_t *)vq->header) + off);
+-			vq->frame[i] = ((uint8_t *)vq->header) + off + FRAME_HEADER_SIZE;
+-		}
+-		vq->ready_to_read = true;
++	uint64_t sequence = read_sequence(vq->view);
++	if (!sequence)
++		return SHARED_QUEUE_STATE_STARTING;
++
++	if (sequence != vq->last_sequence) {
++		vq->last_sequence = sequence;
++		vq->last_change_ms = GetTickCount64();
++		vq->duplicate_count = 0;
+ 	}
+ 
+-	return state;
++	/* The producer may leave the mapping on disk after Lenscord stops. Treat a
++	 * stale stream as stopped so the OBS filter returns its normal placeholder. */
++	if (GetTickCount64() - vq->last_change_ms > 1500)
++		return SHARED_QUEUE_STATE_STARTING;
++
++	if (!vq->ready_to_read)
++		vq->ready_to_read = true;
++	return SHARED_QUEUE_STATE_READY;
+ }
+ 
+ bool video_queue_read(video_queue_t *vq, nv12_scale_t *scale, void *dst, uint64_t *ts)
+ {
+-	struct queue_header *qh = vq->header;
+-	long inc = qh->read_idx;
+-
+-	if (qh->state == SHARED_QUEUE_STATE_STOPPING) {
++	UNREFERENCED_PARAMETER(ts);
++	if (!vq || !vq->view || !scale || !dst || !valid_header(vq->view))
+ 		return false;
+-	}
+ 
+-	if (inc == vq->last_inc) {
+-		if (++vq->dup_counter == 10) {
++	uint64_t sequence = 0;
++	bool copied = false;
++	for (int attempt = 0; attempt < 3; attempt++) {
++		uint64_t before = read_sequence(vq->view);
++		if (!before)
++			return false;
++
++		LONG slot = read_active_slot(vq->view);
++		if (slot < 0 || slot > 1)
+ 			return false;
++
++		MemoryBarrier();
++		const uint8_t *source = vq->view + LENSCORD_HEADER_SIZE + slot * LENSCORD_FRAME_SIZE;
++		memcpy(vq->last_frame, source, LENSCORD_FRAME_SIZE);
++		MemoryBarrier();
++		uint64_t after = read_sequence(vq->view);
++		if (before == after) {
++			sequence = after;
++			copied = true;
++			break;
+ 		}
+-	} else {
+-		vq->dup_counter = 0;
+-		vq->last_inc = inc;
+ 	}
+ 
+-	unsigned long idx = get_idx(inc);
+-
+-	*ts = *vq->ts[idx];
++	if (!copied)
++		return false;
++	if (sequence == vq->last_sequence) {
++		if (++vq->duplicate_count >= 10)
++			return false;
++	} else {
++		vq->last_sequence = sequence;
++		vq->last_change_ms = GetTickCount64();
++		vq->duplicate_count = 0;
++	}
+ 
+-	nv12_do_scale(scale, dst, vq->frame[idx]);
++	nv12_do_scale(scale, dst, vq->last_frame);
+ 	return true;
+ }
+diff --git a/plugins/win-dshow/virtualcam-module/lenscord-no-vendor-device.cpp b/plugins/win-dshow/virtualcam-module/lenscord-no-vendor-device.cpp
+new file mode 100644
+index 0000000..d7b30e2
+--- /dev/null
++++ b/plugins/win-dshow/virtualcam-module/lenscord-no-vendor-device.cpp
+@@ -0,0 +1,20 @@
++#include <windows.h>
++#include <source/device.hpp>
++
++/* Hardware-specific Elgato controls are unrelated to the virtual output pin.
++ * Keep libdshowcapture's generic device code linkable without its optional ATL
++ * based capture-device-support submodule. */
++namespace DShow {
++bool IsVendorVideoHDR(IKsPropertySet *)
++{
++	return false;
++}
++
++void SetVendorVideoFormat(IKsPropertySet *, bool)
++{
++}
++
++void SetVendorTonemapperUsage(IBaseFilter *, bool)
++{
++}
++} // namespace DShow

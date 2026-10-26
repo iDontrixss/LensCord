@@ -1,10 +1,7 @@
-# Paquetes pesados y no redistribuibles (SDK .NET local, platform-tools Android)
 tools/
 
-# Evidencia y logs locales (contienen datos privados: serials, IPs de red)
 evidencia/
 
-# Salidas de build
 bin/
 obj/
 *.pdb
@@ -12,5 +9,12 @@ obj/
 dispositivo/build/
 virtualcam/payload/
 
-# Dependencias grandes de terceros (DirectN ~21 MB): descargar por separado
 virtualcam/Source/External/
+
+pc/dist/
+pc/Release/
+release/*.zip
+release/Lenscord-instalador/data/
+third_party/
+*.old
+*.pre-obs.dll

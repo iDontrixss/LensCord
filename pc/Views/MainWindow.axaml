@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controles="clr-namespace:Lenscord.Controls"
+        xmlns:loc="clr-namespace:Lenscord.Core"
         xmlns:svg="clr-namespace:Avalonia.Svg.Skia;assembly=Svg.Controls.Skia.Avalonia"
         x:Class="Lenscord.Views.MainWindow"
         Title="Lenscord" Width="1320" Height="900"
@@ -28,7 +29,7 @@
 
           <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
             <Border Classes="insignia" IsVisible="{Binding FueraDeLinea}">
-              <TextBlock Text="SEÑAL SIMULADA" />
+              <TextBlock Text="{loc:T xaml.senal_simulada}" />
             </Border>
 
             <Border Classes="estadoConexion" IsVisible="{Binding HayTransporte}">
@@ -40,7 +41,7 @@
             </Border>
 
             <Button Classes="contorno" Click="OnCambiarModo" Padding="14,8"
-                    AutomationProperties.Name="Cambiar entre USB y Wi-Fi">
+                    AutomationProperties.Name="{loc:T xaml.cambiar_modo}">
               <StackPanel Orientation="Horizontal" Spacing="7">
                 <svg:Svg Path="{Binding IconoModoSvg}" Width="16" Height="16" />
                 <TextBlock Text="{Binding TextoModo}" />
@@ -49,22 +50,22 @@
 
             <Button Classes="pildoraPrincipal" Click="OnIniciar"
                     IsEnabled="{Binding PuedeIniciar}" IsVisible="{Binding MostrarIniciar}"
-                    AutomationProperties.Name="Iniciar cámara">
+                    AutomationProperties.Name="{loc:T xaml.iniciar}">
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <svg:Svg Path="/Assets/Icons/play.svg" Width="14" Height="14" />
-                <TextBlock Text="Iniciar cámara" />
+                <TextBlock Text="{loc:T xaml.iniciar}" />
               </StackPanel>
             </Button>
 
             <Button Classes="pildoraPrincipal" Click="OnDetener" IsVisible="{Binding MostrarDetener}"
-                    AutomationProperties.Name="Detener cámara">
+                    AutomationProperties.Name="{loc:T xaml.detener_camara}">
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <svg:Svg Path="/Assets/Icons/stop.svg" Width="12" Height="12" />
-                <TextBlock Text="Detener" />
+                <TextBlock Text="{loc:T xaml.detener}" />
               </StackPanel>
             </Button>
-            <Button Classes="icono" Click="OnConfiguracion" ToolTip.Tip="Configuración"
-                    AutomationProperties.Name="Abrir configuración">
+            <Button Classes="icono" Click="OnConfiguracion" ToolTip.Tip="{loc:T titulo.configuracion}"
+                    AutomationProperties.Name="{loc:T xaml.abrir_configuracion}">
               <svg:Svg Path="/Assets/Icons/settings.svg" Width="18" Height="18" />
             </Button>
           </StackPanel>
@@ -73,12 +74,12 @@
         <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="22,0,22,0" IsVisible="{Binding MostrarPanelCamara}">
           <Border Classes="barraFlotante" VerticalAlignment="Center" Margin="0,8,0,8">
             <StackPanel Spacing="4">
-              <Button Classes="icono" Click="OnZoomMas" ToolTip.Tip="Acercar"
-                      AutomationProperties.Name="Acercar zoom">
+              <Button Classes="icono" Click="OnZoomMas" ToolTip.Tip="{loc:T xaml.acercar}"
+                      AutomationProperties.Name="{loc:T xaml.acercar_zoom}">
                 <svg:Svg Path="/Assets/Icons/zoom-in.svg" Width="22" Height="22" />
               </Button>
-              <Button Classes="icono" Click="OnZoomMenos" ToolTip.Tip="Alejar"
-                      AutomationProperties.Name="Alejar zoom">
+              <Button Classes="icono" Click="OnZoomMenos" ToolTip.Tip="{loc:T xaml.alejar}"
+                      AutomationProperties.Name="{loc:T xaml.alejar_zoom}">
                 <svg:Svg Path="/Assets/Icons/zoom-out.svg" Width="22" Height="22" />
               </Button>
               <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
@@ -86,26 +87,26 @@
                       IsEnabled="{Binding TorchPosible}" AutomationProperties.Name="{Binding FlashTooltip}">
                 <svg:Svg Path="{Binding FlashIconSvg}" Width="22" Height="22" />
               </Button>
-              <Button Classes="icono" Click="OnEspejo" ToolTip.Tip="Espejo horizontal"
-                      AutomationProperties.Name="Espejo horizontal">
+              <Button Classes="icono" Click="OnEspejo" ToolTip.Tip="{loc:T xaml.espejo}"
+                      AutomationProperties.Name="{loc:T xaml.espejo}">
                 <svg:Svg Path="/Assets/Icons/mirror.svg" Width="22" Height="22" />
               </Button>
               <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
-              <Button Classes="icono" Click="OnPausa" ToolTip.Tip="Pausar o reanudar"
-                      AutomationProperties.Name="Pausar o reanudar">
+              <Button Classes="icono" Click="OnPausa" ToolTip.Tip="{loc:T xaml.pausar_reanudar}"
+                      AutomationProperties.Name="{loc:T xaml.pausar_reanudar}">
                 <svg:Svg Path="/Assets/Icons/pause.svg" Width="22" Height="22" />
               </Button>
-              <Button Classes="icono" Click="OnCamara" ToolTip.Tip="Cambiar de cámara"
-                      AutomationProperties.Name="Cambiar de cámara">
+              <Button Classes="icono" Click="OnCamara" ToolTip.Tip="{loc:T xaml.cambiar_camara_tip}"
+                      AutomationProperties.Name="{loc:T xaml.cambiar_camara_tip}">
                 <svg:Svg Path="/Assets/Icons/camera-switch.svg" Width="22" Height="22" />
               </Button>
               <Rectangle Height="1" Fill="#EAEAEC" Margin="8,5" />
-              <Button Classes="icono" Click="OnRotar" ToolTip.Tip="Rotar 90 grados"
-                      AutomationProperties.Name="Rotar 90 grados">
+              <Button Classes="icono" Click="OnRotar" ToolTip.Tip="{loc:T xaml.rotar}"
+                      AutomationProperties.Name="{loc:T xaml.rotar}">
                 <svg:Svg Path="/Assets/Icons/rotate.svg" Width="22" Height="22" />
               </Button>
-              <Button Classes="icono" Click="OnRecorte" ToolTip.Tip="Cambiar recorte"
-                      AutomationProperties.Name="Cambiar recorte">
+              <Button Classes="icono" Click="OnRecorte" ToolTip.Tip="{loc:T xaml.cambiar_recorte}"
+                      AutomationProperties.Name="{loc:T xaml.cambiar_recorte}">
                 <svg:Svg Path="/Assets/Icons/crop.svg" Width="22" Height="22" />
               </Button>
             </StackPanel>
@@ -118,7 +119,7 @@
               <ScrollViewer x:Name="LienzoScroll" VerticalScrollBarVisibility="Auto"
                             HorizontalScrollBarVisibility="Disabled"
                             VerticalContentAlignment="Top" HorizontalContentAlignment="Stretch">
-                <StackPanel MaxWidth="1080" HorizontalAlignment="Center" Margin="44,6,44,24" Spacing="12">
+                <StackPanel x:Name="ContenidoLienzo" MaxWidth="1080" Margin="44,6,44,24" Spacing="12">
                   <StackPanel Spacing="7" HorizontalAlignment="Center" Margin="0,8,0,0">
                     <TextBlock Classes="titular" HorizontalAlignment="Center" Text="{Binding Titular}" />
                     <TextBlock Classes="subtitular" HorizontalAlignment="Center" MaxWidth="590"
@@ -155,85 +156,87 @@
 
                   <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
                     <Button Classes="pildora" Click="OnPausa" IsEnabled="{Binding Transmitiendo}"
-                            AutomationProperties.Name="Pausar o reanudar">
+                            AutomationProperties.Name="{loc:T xaml.pausar_reanudar}">
                       <StackPanel Orientation="Horizontal" Spacing="7">
                         <svg:Svg Path="/Assets/Icons/pause.svg" Width="15" Height="15" />
-                        <TextBlock Text="Pausar" />
+                        <TextBlock Text="{loc:T xaml.pausar}" />
                       </StackPanel>
                     </Button>
                     <Button Classes="pildora" Click="OnCamara" IsEnabled="{Binding Transmitiendo}"
-                            AutomationProperties.Name="Cambiar de cámara">
-                      <TextBlock Text="Cambiar cámara" />
+                            AutomationProperties.Name="{loc:T xaml.cambiar_camara_tip}">
+                      <TextBlock Text="{loc:T xaml.cambiar_camara}" />
                     </Button>
                     <Button Classes="pildora" Click="OnRecorte" IsEnabled="{Binding Transmitiendo}"
-                            AutomationProperties.Name="Cambiar recorte">
-                      <TextBlock Text="Recorte" />
+                            AutomationProperties.Name="{loc:T xaml.cambiar_recorte}">
+                      <TextBlock Text="{loc:T xaml.recorte}" />
                     </Button>
                   </StackPanel>
 
                   <Grid ColumnDefinitions="*,*,*,*,*" ColumnSpacing="12" Margin="0,4,0,0">
-                    <Border Classes="tarjeta" Grid.Column="0">
+                    <Border Classes="tarjeta" Grid.Column="0" MinHeight="164">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#E8E8EA">
                           <svg:Svg Path="/Assets/Icons/wifi.svg" Width="21" Height="21" />
                         </Border>
-                        <TextBlock Classes="tituloTarjeta" Text="Conexión" />
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.conexion}" />
                         <TextBlock Classes="descripcionTarjeta" Text="{Binding TransporteTexto}" />
                       </StackPanel>
                     </Border>
 
-                    <Border Classes="tarjeta" Grid.Column="1">
+                    <Border Classes="tarjeta" Grid.Column="1" MinHeight="164">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#E3E5FA">
                           <svg:Svg Path="/Assets/Icons/camera.svg" Width="21" Height="21" />
                         </Border>
-                        <TextBlock Classes="tituloTarjeta" Text="Lente" />
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.lente}" />
                         <TextBlock Classes="descripcionTarjeta" Text="{Binding LenteTexto}" />
                       </StackPanel>
                     </Border>
 
-                    <Border Classes="tarjeta" Grid.Column="2">
+                    <Border Classes="tarjeta" Grid.Column="2" MinHeight="164">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#DDF3E8">
                           <svg:Svg Path="/Assets/Icons/image.svg" Width="21" Height="21" />
                         </Border>
-                        <TextBlock Classes="tituloTarjeta" Text="Imagen" />
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.imagen}" />
                         <TextBlock Classes="descripcionTarjeta"
-                                   Text="Espejo, rotación y recorte se aplican a la imagen." />
+                                   Text="{loc:T xaml.imagen_desc}" />
                       </StackPanel>
                     </Border>
 
-                    <Border Classes="tarjeta" Grid.Column="3">
+                    <Border Classes="tarjeta" Grid.Column="3" MinHeight="164">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#F5E7F0">
                           <svg:Svg Path="/Assets/Icons/camera.svg" Width="21" Height="21" />
                         </Border>
-                        <TextBlock Classes="tituloTarjeta" Text="Captura" />
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.captura}" />
+                        <TextBlock Classes="descripcionTarjeta"
+                                   Text="{loc:T xaml.captura_desc}" />
                       </StackPanel>
                     </Border>
 
-                    <Border Classes="tarjeta" Grid.Column="4">
+                    <Border Classes="tarjeta" Grid.Column="4" MinHeight="164">
                       <StackPanel Spacing="9">
                         <Border Classes="baldosa" Background="#E8E8EA">
                           <svg:Svg Path="/Assets/Icons/output.svg" Width="21" Height="21" />
                         </Border>
-                        <TextBlock Classes="tituloTarjeta" Text="Salida" />
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.salida}" />
                         <TextBlock Classes="descripcionTarjeta"
-                                   Text="Cámara virtual Lenscord para Discord, OBS y apps de Windows." />
+                                   Text="{loc:T xaml.salida_desc}" />
                       </StackPanel>
                     </Border>
                   </Grid>
 
                   <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
                     <ToggleButton x:Name="FichaCaptura" Classes="panelFicha" Click="OnPanelFicha"
-                                  AutomationProperties.Name="Abrir ajustes de captura">
+                                  AutomationProperties.Name="{loc:T xaml.abrir_captura}">
                       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                         <Border Classes="baldosa" Background="{DynamicResource PastelLavanda}">
                           <svg:Svg Path="/Assets/Icons/camera.svg" Width="19" Height="19" />
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                          <TextBlock Classes="tituloTarjeta" Text="Ajustes de captura" />
-                          <TextBlock Classes="descripcionTarjeta" Text="Cámara, resolución y cadencia." />
+                          <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.ajustes_captura}" />
+                          <TextBlock Classes="descripcionTarjeta" Text="{loc:T xaml.ajustes_captura_desc}" />
                         </StackPanel>
                         <svg:Svg Grid.Column="2" Classes="chevronFicha" Path="/Assets/Icons/chevron-right.svg"
                                  Width="15" Height="15" VerticalAlignment="Center" />
@@ -241,28 +244,28 @@
                     </ToggleButton>
                     <ToggleButton x:Name="FichaWifi" Classes="panelFicha" Click="OnPanelFicha"
                                   IsVisible="{Binding MostrarPanelWifi}"
-                                  AutomationProperties.Name="Abrir conexión Wi-Fi">
+                                  AutomationProperties.Name="{loc:T xaml.abrir_wifi}">
                       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                         <Border Classes="baldosa" Background="{DynamicResource RosaFondo}">
                           <svg:Svg Path="/Assets/Icons/wifi.svg" Width="19" Height="19" />
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                          <TextBlock Classes="tituloTarjeta" Text="Conexión Wi-Fi" />
-                          <TextBlock Classes="descripcionTarjeta" Text="Buscar, emparejar y conectar el teléfono." />
+                          <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.conexion_wifi}" />
+                          <TextBlock Classes="descripcionTarjeta" Text="{loc:T xaml.conexion_wifi_desc}" />
                         </StackPanel>
                         <svg:Svg Grid.Column="2" Classes="chevronFicha" Path="/Assets/Icons/chevron-right.svg"
                                  Width="15" Height="15" VerticalAlignment="Center" />
                       </Grid>
                     </ToggleButton>
                     <ToggleButton x:Name="FichaRegistro" Classes="panelFicha" Click="OnPanelFicha"
-                                  AutomationProperties.Name="Abrir registro">
+                                  AutomationProperties.Name="{loc:T xaml.abrir_registro}">
                       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                         <Border Classes="baldosa" Background="{DynamicResource PastelGris}">
                           <svg:Svg Path="/Assets/Icons/output.svg" Width="19" Height="19" />
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                          <TextBlock Classes="tituloTarjeta" Text="Registro" />
-                          <TextBlock Classes="descripcionTarjeta" Text="Diagnóstico de la sesión actual." />
+                          <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.registro}" />
+                          <TextBlock Classes="descripcionTarjeta" Text="{loc:T xaml.registro_desc}" />
                         </StackPanel>
                         <svg:Svg Grid.Column="2" Classes="chevronFicha" Path="/Assets/Icons/chevron-right.svg"
                                  Width="15" Height="15" VerticalAlignment="Center" />
@@ -274,7 +277,7 @@
                     <StackPanel Spacing="12">
                       <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                         <StackPanel Grid.Column="0" Spacing="4">
-                          <TextBlock Classes="etiqueta" Text="Cámara" />
+                          <TextBlock Classes="etiqueta" Text="{loc:T xaml.camara}" />
                           <ComboBox ItemsSource="{Binding Camaras}" SelectedItem="{Binding Camara}"
                                     HorizontalAlignment="Stretch">
                             <ComboBox.ItemTemplate>
@@ -285,7 +288,7 @@
                           </ComboBox>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="4">
-                          <TextBlock Classes="etiqueta" Text="Resolución y cadencia" />
+                          <TextBlock Classes="etiqueta" Text="{loc:T xaml.resolucion}" />
                           <ComboBox ItemsSource="{Binding Resoluciones}"
                                     SelectedItem="{Binding ResolucionSeleccionada}"
                                     SelectionChanged="OnResolucion"
@@ -299,7 +302,7 @@
                         </StackPanel>
                       </Grid>
                       <TextBlock Classes="descripcionTarjeta"
-                                 Text="{Binding TipoZoom, StringFormat='Tipo de zoom: {0}'}" />
+                                 Text="{Binding TipoZoomTexto}" />
                     </StackPanel>
                   </Border>
 
@@ -308,7 +311,7 @@
                       <Button Classes="pildora" Click="OnDetectarWifi" HorizontalAlignment="Left">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                           <svg:Svg Path="/Assets/Icons/wifi.svg" Width="17" Height="17" />
-                          <TextBlock Text="Buscar dispositivos" />
+                          <TextBlock Text="{loc:T xaml.buscar_dispositivos}" />
                         </StackPanel>
                       </Button>
 
@@ -319,17 +322,17 @@
                             <Border Classes="tarjeta" Padding="12" Margin="0,0,0,8" Background="{DynamicResource TarjetaHover}">
                               <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                                 <StackPanel Spacing="3" VerticalAlignment="Center">
-                                  <TextBlock Text="{Binding Nombre}" FontWeight="SemiBold"
+                                  <TextBlock Text="{Binding Titulo}" FontWeight="SemiBold"
                                              Foreground="{DynamicResource Tinta}" />
                                   <TextBlock Text="{Binding Resumen}" Classes="descripcionTarjeta" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Classes="pildora" Click="OnEmparejarDispositivoWifi"
                                         IsVisible="{Binding TieneEmparejamiento}">
-                                  <TextBlock Text="Emparejar" />
+                                  <TextBlock Text="{loc:T xaml.emparejar}" />
                                 </Button>
                                 <Button Grid.Column="2" Classes="pildoraPrincipal" Click="OnConectarDispositivoWifi"
                                         IsEnabled="{Binding TieneConexion}">
-                                  <TextBlock Text="Conectar" />
+                                  <TextBlock Text="{loc:T xaml.conectar}" />
                                 </Button>
                               </Grid>
                             </Border>
@@ -338,33 +341,33 @@
                       </ItemsControl>
 
                       <StackPanel Spacing="4" MaxWidth="260" HorizontalAlignment="Left">
-                        <TextBlock Classes="etiqueta" Text="Código de emparejamiento del teléfono" />
-                        <TextBox Text="{Binding WifiCodigo}" Watermark="6 dígitos" MaxLength="6" />
+                        <TextBlock Classes="etiqueta" Text="{loc:T xaml.codigo}" />
+                        <TextBox Text="{Binding WifiCodigo}" Watermark="{loc:T xaml.seis_digitos}" MaxLength="6" />
                       </StackPanel>
 
-                      <Expander Classes="panelDesplegable compacto" Header="Conectar manualmente con IP"
+                      <Expander Classes="panelDesplegable compacto" Header="{loc:T xaml.conectar_manual}"
                                 IsExpanded="False" HorizontalContentAlignment="Stretch">
                         <StackPanel Spacing="10" Margin="0,8,0,0">
                           <Grid ColumnDefinitions="2*,*,*" ColumnSpacing="10">
                             <StackPanel Grid.Column="0" Spacing="4">
-                              <TextBlock Classes="etiqueta" Text="IP del celular" />
+                              <TextBlock Classes="etiqueta" Text="{loc:T xaml.ip_celular}" />
                               <TextBox Text="{Binding WifiIp}" Watermark="192.168.1.50" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Spacing="4">
-                              <TextBlock Classes="etiqueta" Text="Puerto de conexión" />
+                              <TextBlock Classes="etiqueta" Text="{loc:T xaml.puerto_conexion}" />
                               <TextBox Text="{Binding WifiPuerto}" Watermark="5555" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Spacing="4">
-                              <TextBlock Classes="etiqueta" Text="Puerto de emparejamiento" />
+                              <TextBlock Classes="etiqueta" Text="{loc:T xaml.puerto_emparejamiento}" />
                               <TextBox Text="{Binding WifiPuertoEmparejamiento}" Watermark="37123" />
                             </StackPanel>
                           </Grid>
                           <StackPanel Orientation="Horizontal" Spacing="8">
                             <Button Classes="pildora" Click="OnEmparejar">
-                              <TextBlock Text="Emparejar por IP" />
+                              <TextBlock Text="{loc:T xaml.emparejar_ip}" />
                             </Button>
                             <Button Classes="pildoraPrincipal" Click="OnConectarWifi">
-                              <TextBlock Text="Conectar por IP" />
+                              <TextBlock Text="{loc:T xaml.conectar_ip}" />
                             </Button>
                           </StackPanel>
                         </StackPanel>
@@ -372,10 +375,10 @@
 
                       <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button Classes="pildora" Click="OnActivarWifi">
-                          <TextBlock Text="Activar Wi-Fi por USB" />
+                          <TextBlock Text="{loc:T xaml.activar_wifi}" />
                         </Button>
                         <Button Classes="pildora" Click="OnVolverUsb">
-                          <TextBlock Text="Volver a USB" />
+                          <TextBlock Text="{loc:T xaml.volver_usb}" />
                         </Button>
                       </StackPanel>
                       <TextBlock Classes="descripcionTarjeta" Text="{Binding WifiEstado}" />
@@ -403,33 +406,33 @@
 
         <Grid Grid.Row="1" Margin="22,0,22,0" IsVisible="{Binding MostrarPanelConfiguracion}">
           <Border Classes="lienzo">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-              <StackPanel MaxWidth="1080" HorizontalAlignment="Center" Margin="40,28,40,32" Spacing="18">
+            <ScrollViewer x:Name="ScrollConfiguracion" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel x:Name="ContenidoConfiguracion" MaxWidth="1080" Margin="40,28,40,32" Spacing="18">
                 <StackPanel Spacing="6">
-                  <TextBlock Classes="titular" Text="Configuración" FontSize="32" />
+                  <TextBlock Classes="titular" Text="{loc:T titulo.configuracion}" FontSize="32" />
                 </StackPanel>
                 <Grid ColumnDefinitions="210,*" ColumnSpacing="16">
                   <StackPanel Grid.Column="0" Spacing="12">
                     <Border Classes="tarjeta" Padding="12">
                       <StackPanel Spacing="8">
-                        <TextBlock Classes="etiqueta" Text="PREFERENCIAS" Margin="8,2,0,4" />
+                        <TextBlock Classes="etiqueta" Text="{loc:T xaml.preferencias}" Margin="8,2,0,4" />
                         <Border Background="{DynamicResource TarjetaHover}" CornerRadius="12" Padding="11,10">
                           <StackPanel Orientation="Horizontal" Spacing="9">
                             <svg:Svg Path="/Assets/Icons/image.svg" Width="17" Height="17" />
-                            <TextBlock Text="Apariencia" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" />
+                            <TextBlock Text="{loc:T xaml.apariencia}" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" />
                           </StackPanel>
                         </Border>
                         <Border Classes="chip" Padding="11,10">
                           <StackPanel Orientation="Horizontal" Spacing="9">
                             <svg:Svg Path="{Binding IconoModoSvg}" Width="17" Height="17" />
-                            <TextBlock Text="Cámara y conexión" Foreground="{DynamicResource TintaSuave}" />
+                            <TextBlock Text="{loc:T xaml.camara_conexion}" Foreground="{DynamicResource TintaSuave}" />
                           </StackPanel>
                         </Border>
                       </StackPanel>
                     </Border>
                     <Border Classes="tarjeta" Padding="14">
                       <StackPanel Spacing="7">
-                        <TextBlock Classes="etiqueta" Text="SESIÓN ACTUAL" />
+                        <TextBlock Classes="etiqueta" Text="{loc:T xaml.sesion_actual}" />
                         <TextBlock Text="{Binding EstadoTexto}" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" TextWrapping="Wrap" />
                         <TextBlock Classes="descripcionTarjeta" Text="{Binding TransporteTexto}" />
                         <TextBlock Classes="descripcionTarjeta" Text="{Binding LenteTexto}" />
@@ -440,7 +443,7 @@
                     <Border Classes="tarjeta" Padding="20">
                       <StackPanel Spacing="14">
                         <StackPanel Spacing="5">
-                          <TextBlock Classes="tituloTarjeta" Text="Apariencia" FontSize="20" />
+                          <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.apariencia}" FontSize="20" />
                         </StackPanel>
                         <ItemsControl ItemsSource="{Binding Temas}">
                           <ItemsControl.ItemsPanel>
@@ -450,7 +453,7 @@
                             <DataTemplate>
                               <Button Width="148" Margin="0,0,10,10" Padding="7" Background="{DynamicResource Marco}"
                                       BorderBrush="{Binding ColorBorde}" BorderThickness="1.5" CornerRadius="15"
-                                      Click="OnSeleccionarTema" AutomationProperties.Name="Elegir tema">
+                                      Click="OnSeleccionarTema" AutomationProperties.Name="{loc:T xaml.elegir_tema}">
                                 <StackPanel Spacing="9">
                                   <Border Height="78" Background="{Binding BrochaFondo}" CornerRadius="10" Padding="8">
                                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7">
@@ -470,7 +473,7 @@
                                       <TextBlock Text="{Binding Descripcion}" FontSize="10" Foreground="{DynamicResource TintaTenue}" />
                                     </StackPanel>
                                     <Border Grid.Column="1" Classes="chip" Padding="6,3" IsVisible="{Binding Seleccionado}">
-                                      <TextBlock Text="Activo" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                                      <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
                                     </Border>
                                   </Grid>
                                 </StackPanel>
@@ -482,8 +485,31 @@
                     </Border>
                     <Border Classes="tarjeta" Padding="20">
                       <StackPanel Spacing="12">
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.idioma}" FontSize="18" />
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                          <Button Classes="pildora" Click="OnIdiomaEs">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                              <TextBlock Text="Español" />
+                              <Border Classes="chip" Padding="6,3" IsVisible="{Binding IdiomaEsEs}">
+                                <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                              </Border>
+                            </StackPanel>
+                          </Button>
+                          <Button Classes="pildora" Click="OnIdiomaEn">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                              <TextBlock Text="English" />
+                              <Border Classes="chip" Padding="6,3" IsVisible="{Binding IdiomaEsEn}">
+                                <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                              </Border>
+                            </StackPanel>
+                          </Button>
+                        </StackPanel>
+                      </StackPanel>
+                    </Border>
+                    <Border Classes="tarjeta" Padding="20">
+                      <StackPanel Spacing="12">
                         <StackPanel Spacing="4">
-                          <TextBlock Classes="tituloTarjeta" Text="Cámara y conexión" FontSize="18" />
+                          <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.camara_conexion}" FontSize="18" />
                         </StackPanel>
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
                           <StackPanel Spacing="5">
@@ -493,7 +519,7 @@
                           <Button Grid.Column="1" Classes="pildora" Click="OnCambiarModo">
                             <StackPanel Orientation="Horizontal" Spacing="7">
                               <svg:Svg Path="{Binding IconoModoSvg}" Width="16" Height="16" />
-                              <TextBlock Text="Cambiar transporte" />
+                              <TextBlock Text="{loc:T xaml.cambiar_transporte}" />
                             </StackPanel>
                           </Button>
                         </Grid>
@@ -501,7 +527,16 @@
                     </Border>
                     <Border Classes="tarjeta" Padding="20">
                       <StackPanel Spacing="5">
-                        <TextBlock Classes="tituloTarjeta" Text="Salida virtual" FontSize="18" />
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.salida_virtual}" FontSize="18" />
+                      </StackPanel>
+                    </Border>
+                    <Border Classes="tarjeta" Padding="20">
+                      <StackPanel Spacing="12">
+                        <TextBlock Classes="tituloTarjeta" Text="{loc:T xaml.introduccion}" FontSize="18" />
+                        <TextBlock Classes="descripcionTarjeta" Text="{loc:T xaml.introduccion_desc}" />
+                        <Button Classes="pildora" Click="OnRepetirIntroduccion" HorizontalAlignment="Left">
+                          <TextBlock Text="{loc:T xaml.repetir_introduccion}" />
+                        </Button>
                       </StackPanel>
                     </Border>
                   </StackPanel>
@@ -530,7 +565,7 @@
               <TextBlock Classes="chipTexto" Text="{Binding Reloj}" />
             </Border>
             <Border Classes="chip">
-              <TextBlock Classes="chipTexto" Text="Sesión local" />
+              <TextBlock Classes="chipTexto" Text="{loc:T xaml.sesion_local}" />
             </Border>
           </StackPanel>
         </Grid>

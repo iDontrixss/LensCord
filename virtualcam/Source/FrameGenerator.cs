@@ -169,6 +169,8 @@ internal sealed unsafe class SharedFrameReader : IDisposable
 
         try
         {
+            if (view.Capacity < Shared.HeaderSize + 2L * Shared.FrameSize) return false;
+
             if (view.ReadUInt32(0) != Shared.FrameMagic ||
                 view.ReadInt32(4) != 1 ||
                 view.ReadInt32(8) != Shared.Width ||

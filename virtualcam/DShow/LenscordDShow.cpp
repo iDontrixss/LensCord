@@ -281,6 +281,14 @@ private:
         if (archivo == INVALID_HANDLE_VALUE)
             return false;
 
+        LARGE_INTEGER tamanoArchivo = {};
+        if (!GetFileSizeEx(archivo, &tamanoArchivo) ||
+            tamanoArchivo.QuadPart < 4096LL + 2LL * 1280LL * 720LL * 3LL / 2LL)
+        {
+            CloseHandle(archivo);
+            return false;
+        }
+
         HANDLE mapa = CreateFileMappingW(archivo, nullptr, PAGE_READONLY, 0, 0, nullptr);
         CloseHandle(archivo);
         if (!mapa) return false;

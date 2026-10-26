@@ -1,4 +1,5 @@
 using Avalonia;
+using Lenscord.Core;
 using System;
 
 namespace Lenscord;
@@ -9,10 +10,10 @@ internal static class Program
     public static int Main(string[] args)
     {
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
-            Registrar("FATAL no controlado: " + e.ExceptionObject);
+            Registrar(Loc.T("core.programa.fatal_no_controlado", e.ExceptionObject));
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
-            Registrar("Tarea no observada: " + e.Exception);
+            Registrar(Loc.T("core.programa.tarea_no_observada", e.Exception));
             e.SetObserved();
         };
 
@@ -22,8 +23,8 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            Registrar("Lenscord no pudo arrancar: " + ex);
-            Console.Error.WriteLine("Lenscord no pudo arrancar: " + ex);
+            Registrar(Loc.T("core.programa.no_pudo_arrancar", ex));
+            Console.Error.WriteLine(Loc.T("core.programa.no_pudo_arrancar", ex));
             return 1;
         }
     }
@@ -32,9 +33,7 @@ internal static class Program
     {
         try
         {
-            var d = new DirectoryInfo(AppContext.BaseDirectory);
-            while (d is not null && !File.Exists(Path.Combine(d.FullName, "PROGRESO.md"))) d = d.Parent;
-            string dir = Path.Combine(d?.FullName ?? AppContext.BaseDirectory, "evidencia");
+            string dir = Rutas.Logs;
             Directory.CreateDirectory(dir);
             File.AppendAllText(Path.Combine(dir, "app.log"),
                 $"{DateTime.Now:O}  {texto}{Environment.NewLine}");

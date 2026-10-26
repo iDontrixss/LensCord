@@ -22,7 +22,10 @@ function Find-Jdk {
             Where-Object { Test-Path (Join-Path $_.FullName "bin\java.exe") } |
             ForEach-Object { $cands += $_.FullName }
     }
-    $cands | Sort-Object -Descending | Select-Object -First 1
+    $cands | Sort-Object -Descending -Property {
+        $nombre = Split-Path $_ -Leaf
+        if ($nombre -match '(\d+)(?:[._](\d+))?') { [version]("$($Matches[1]).$([int]$Matches[2])") } else { [version]'0.0' }
+    } | Select-Object -First 1
 }
 
 $jdk = Find-Jdk
@@ -50,8 +53,7 @@ Write-Host "javac -> .class" -ForegroundColor Cyan
     -bootclasspath $androidJar `
     -classpath $androidJar `
     -d $build `
-    (Join-Path $src "com\lenscord\Acquire.java") `
-    (Join-Path $src "com\lenscord\LenscordDevice.java")
+    @(Get-ChildItem $src -Recurse -Filter *.java | Select-Object -ExpandProperty FullName)
 $rc = $LASTEXITCODE
 if ($rc -ne 0) { $ErrorActionPreference = "Stop"; throw "javac fallo (codigo $rc)" }
 

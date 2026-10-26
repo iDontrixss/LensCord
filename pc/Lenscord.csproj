@@ -11,11 +11,12 @@
     <AssemblyName>Lenscord</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Publicamos para los tres sistemas desde una sola maquina. -->
-    <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifiers>win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
   </PropertyGroup>
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
+    <EmbeddedResource Include="Idiomas\*.json" LogicalName="Lenscord.Idiomas.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

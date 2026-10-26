@@ -45,32 +45,25 @@ public sealed class FfmpegH264Decoder : IFuenteVideo
 
     public static string? BuscarFfmpeg(string projectRoot)
     {
-        string exe = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
-        string rid = OperatingSystem.IsWindows() ? "win-x64"
-                   : OperatingSystem.IsMacOS()
-                       ? (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "osx-arm64" : "osx-x64")
-                       : "linux-x64";
+        string exe = Rutas.NombreExe("ffmpeg");
+        string rid = Rutas.Rid;
 
         foreach (var cand in new[]
         {
             Path.Combine(projectRoot, "tools", "ffmpeg", rid, "bin", exe),
             Path.Combine(projectRoot, "tools", "ffmpeg", exe),
+            Path.Combine(projectRoot, "ffmpeg", exe),
         })
             if (File.Exists(cand)) return cand;
 
-        foreach (var d in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
-        {
-            if (string.IsNullOrWhiteSpace(d)) continue;
-            try { var f = Path.Combine(d.Trim(), exe); if (File.Exists(f)) return f; } catch { }
-        }
-        return null;
+        return Rutas.BuscarEnPath(exe);
     }
 
     public Task IniciarAsync(Stream entradaVideo, int ancho, int alto, CancellationToken ct)
     {
-        string? exe = BuscarFfmpeg(AppContext.BaseDirectory) ?? BuscarFfmpeg(RaizProyecto());
+        string? exe = BuscarFfmpeg(AppContext.BaseDirectory) ?? BuscarFfmpeg(Rutas.Raiz);
         if (exe is null)
-            throw new InvalidOperationException("No se encontro ffmpeg en esta maquina");
+            throw new InvalidOperationException(Loc.T("core.decoders.ffmpeg_no_encontrado"));
 
         Ancho = ancho; Alto = alto;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -102,7 +95,7 @@ foreach (var a in new[]
             "pipe:1"
         }) psi.ArgumentList.Add(a);
 
-        _ff = Process.Start(psi) ?? throw new InvalidOperationException("no se pudo iniciar ffmpeg");
+        _ff = Process.Start(psi) ?? throw new InvalidOperationException(Loc.T("core.decoders.no_se_pudo_iniciar_ffmpeg"));
         Activo = true;
         _ = Task.Run(() => AlimentarAsync(entradaVideo, token), token);
         _ = Task.Run(() => DrenarAsync(token), token);
@@ -117,14 +110,6 @@ foreach (var a in new[]
             catch { }
         }, token);
         return Task.CompletedTask;
-    }
-
-    private static string RaizProyecto()
-    {
-        var d = new DirectoryInfo(AppContext.BaseDirectory);
-        while (d is not null && !File.Exists(Path.Combine(d.FullName, "PROGRESO.md")))
-            d = d.Parent;
-        return d?.FullName ?? AppContext.BaseDirectory;
     }
 
     private async Task AlimentarAsync(Stream entrada, CancellationToken token)
@@ -181,7 +166,7 @@ foreach (var a in new[]
         while (leidos < dest.Length)
         {
             int n = await s.ReadAsync(dest.AsMemory(leidos), ct).ConfigureAwait(false);
-            if (n <= 0) throw new EndOfStreamException("ffmpeg cerro la salida de video");
+            if (n <= 0) throw new EndOfStreamException(Loc.T("core.decoders.ffmpeg_salida_cerrada"));
             leidos += n;
         }
     }
@@ -200,123 +185,13 @@ foreach (var a in new[]
 }
 
 // =====================================================================
-// 2) MJPEG -> Avalonia/Skia. Red de seguridad cuando no hay ffmpeg:
-//    el celular codifica JPEG y aqui se abre con SkiaSharp, que ya viene
-//    dentro de Avalonia. Sin dependencias externas ni licencias.
-// =====================================================================
-public sealed class MjpegDecoder : IFuenteVideo
-{
-    public string Nombre => "MJPEG (decodificador de Avalonia)";
-    public bool Activo { get; private set; }
-    public int Ancho { get; private set; }
-    public int Alto { get; private set; }
-    public event Action<Frame>? FrameRecibido;
-    public event Action<string>? Error;
-
-    private CancellationTokenSource? _cts;
-
-    public Task IniciarAsync(Stream entradaVideo, int ancho, int alto, CancellationToken ct)
-    {
-        Ancho = ancho > 0 ? ancho : 640;
-        Alto = alto > 0 ? alto : 480;
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var token = _cts.Token;
-        Activo = true;
-        _ = Task.Run(() => LeerAsync(entradaVideo, token), token);
-        return Task.CompletedTask;
-    }
-
-    private async Task LeerAsync(Stream entrada, CancellationToken token)
-    {
-        var reloj = Stopwatch.StartNew();
-        var acc = new List<byte>(1 << 16);
-        var buf = new byte[1 << 16];
-        bool dentro = false;
-
-        try
-        {
-            while (!token.IsCancellationRequested)
-            {
-                int n = await entrada.ReadAsync(buf.AsMemory(), token).ConfigureAwait(false);
-                if (n <= 0) break;
-
-                for (int i = 0; i < n; i++)
-                {
-                    byte b = buf[i];
-
-                    if (!dentro)
-                    {
-                        // SOI: 0xFF 0xD8
-                        if (b == 0xFF && i + 1 < n && buf[i + 1] == 0xD8)
-                        {
-                            dentro = true;
-                            acc.Clear();
-                            acc.Add(0xFF); acc.Add(0xD8);
-                            i++;
-                        }
-                        continue;
-                    }
-
-                    acc.Add(b);
-
-                    // EOI: 0xFF 0xD9 -> imagen completa
-                    if (b == 0xD9 && acc.Count >= 2 && acc[^2] == 0xFF)
-                    {
-                        var jpg = acc.ToArray();
-                        dentro = false;
-                        acc.Clear();
-                        try
-                        {
-                            // Decodificamos con Avalonia Bitmap, que por debajo usa Skia.
-                            // Asi no dependemos de la API de SkiaSharp, que cambia entre versiones.
-                            using var ms = new MemoryStream(jpg);
-                            using var bmp = new Bitmap(ms);
-                            int w = bmp.PixelSize.Width, h = bmp.PixelSize.Height;
-                            int stride = w * 4;
-                            var ptr = Marshal.AllocHGlobal(stride * h);
-                            try
-                            {
-                                bmp.CopyPixels(new PixelRect(0, 0, w, h), ptr, stride * h, stride);
-                                var datos = new byte[stride * h];
-                                Marshal.Copy(ptr, datos, 0, datos.Length);
-                                FrameRecibido?.Invoke(new Frame
-                                {
-                                    Bgra = datos,
-                                    Width = w,
-                                    Height = h,
-                                    RecibidoMs = reloj.ElapsedMilliseconds,
-                                });
-                            }
-                            finally { Marshal.FreeHGlobal(ptr); }
-                        }
-                        catch (Exception e) { Error?.Invoke("MJPEG: " + e.Message); }
-                    }
-                }
-            }
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception e) { if (!token.IsCancellationRequested) Error?.Invoke("MJPEG: " + e.Message); }
-    }
-
-    public Task DetenerAsync()
-    {
-        Activo = false;
-        try { _cts?.Cancel(); } catch { }
-        _cts?.Dispose(); _cts = null;
-        return Task.CompletedTask;
-    }
-
-    public async ValueTask DisposeAsync() => await DetenerAsync();
-}
-
-// =====================================================================
 // 3) Fuente simulada. Sirve para construir y probar la INTERFAZ sin
 //    celular. No finge ser una camara: dibuja algo que se mueve, para
 //    poder medir escalado, espejo, rotacion, pausa y FPS de verdad.
 // =====================================================================
 public sealed class FuenteSimulada : IFuenteVideo
 {
-    public string Nombre => "Simulada (sin celular)";
+    public string Nombre => Loc.T("core.decoders.nombre_simulada");
     public bool Activo { get; private set; }
     public int Ancho { get; private set; } = 960;
 public int Alto { get; private set; } = 540;
@@ -344,7 +219,7 @@ public int Alto { get; private set; } = 540;
                 }
             }
 catch (OperationCanceledException) { }
-            catch (Exception e) { Error?.Invoke("fuente simulada: " + e.Message); }
+            catch (Exception e) { Error?.Invoke(Loc.T("core.decoders.fuente_simulada_error", e.Message)); }
         }, token);
         return Task.CompletedTask;
     }

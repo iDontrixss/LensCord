@@ -8,9 +8,6 @@ public enum EstadoDispositivo
     SinCable,
     SinDepuracion,
     SinAutorizar,
-    SinEmparejarWifi,
-    RedDistinta,
-    PuertoCambio,
     Listo,
     Transmitiendo,
     Error,
@@ -39,7 +36,7 @@ public sealed class CamaraInfo
     [JsonPropertyName("physical")] public string[] Physical { get; set; } = Array.Empty<string>();
 
     public string Nombre =>
-        Facing switch { "BACK" => "Trasera", "FRONT" => "Frontal", "EXTERNAL" => "Externa", _ => "Camara" };
+        Loc.T(Facing switch { "BACK" => "camara.trasera", "FRONT" => "camara.frontal", "EXTERNAL" => "camara.externa", _ => "camara.generica" });
 
     public bool EsOptica => Physical.Length > 0;
 
@@ -68,19 +65,24 @@ public sealed class EstadoTelefono
     public double FpsMedidos { get; set; }
     public bool Pausado { get; set; }
     public bool Activa { get; set; }
+    public double ZoomRatio { get; set; } = 1;
+    public double ZoomRatioMin { get; set; } = 1;
+    public double ZoomRatioMax { get; set; } = 1;
 }
 
 public sealed record WifiDispositivoEncontrado(
     string Nombre,
     string Ip,
     string? PuertoConexion,
-    string? PuertoEmparejamiento)
+    string? PuertoEmparejamiento,
+    string? Modelo = null)
 {
+    public string Titulo => string.IsNullOrWhiteSpace(Modelo) ? Loc.T("wifi.dispositivo_android") : Modelo;
     public bool TieneConexion => !string.IsNullOrWhiteSpace(PuertoConexion);
     public bool TieneEmparejamiento => !string.IsNullOrWhiteSpace(PuertoEmparejamiento);
     public string Resumen => TieneConexion
-        ? $"{Ip}:{PuertoConexion} · listo para conectar"
-        : $"{Ip}:{PuertoEmparejamiento} · requiere emparejamiento";
+        ? $"{Ip}:{PuertoConexion} · {Loc.T("wifi.resumen_listo")}"
+        : $"{Ip}:{PuertoEmparejamiento} · {Loc.T("wifi.resumen_emparejar")}";
 }
 
 public sealed record PresetsVideo(int Ancho, int Alto, int Fps);

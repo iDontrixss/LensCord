@@ -1,0 +1,279 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="clr-namespace:Lenscord.Core"
+        xmlns:controles="clr-namespace:Lenscord.Controls"
+        xmlns:svg="clr-namespace:Avalonia.Svg.Skia;assembly=Svg.Controls.Skia.Avalonia"
+        x:Class="Lenscord.Views.OnboardingWindow"
+        Title="Lenscord" Width="900" Height="660"
+        MinWidth="760" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Fondo}"
+        FontFamily="Inter">
+
+  <Border Classes="fondo">
+    <Border Classes="marco">
+      <Panel>
+      <controles:ParticleField x:Name="Particulas" />
+      <Grid RowDefinitions="Auto,*,Auto" Margin="36,26,36,26">
+
+        <StackPanel Grid.Row="0" Spacing="10">
+          <Grid ColumnDefinitions="Auto,*,Auto">
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+              <Border Classes="marca">
+                <Image Source="{Binding Principal.IconoMarca}" Width="26" Height="26" Stretch="Uniform" />
+              </Border>
+              <TextBlock Text="Lenscord" FontWeight="SemiBold" FontSize="14"
+                         Foreground="{DynamicResource Tinta}" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Grid.Column="2" Text="{Binding PasoTexto}" FontSize="12"
+                       Foreground="{DynamicResource TintaTenue}" VerticalAlignment="Center" />
+          </Grid>
+          <ProgressBar Minimum="0" Maximum="4" Value="{Binding Paso}" Height="4" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <Grid Margin="0,24,0,12">
+
+            <StackPanel IsVisible="{Binding EsPasoIdioma}" Spacing="18" MaxWidth="560"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+              <TextBlock Classes="titular" Text="{loc:T onb.idioma_titulo}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" FontSize="32" />
+              <TextBlock Classes="subtitular" Text="{loc:T onb.idioma_desc}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" />
+              <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Center" Margin="0,8,0,0">
+                <Button Classes="pildora" Click="OnIdiomaEs" Padding="26,16">
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="Español" FontSize="16" />
+                    <Border Classes="chip" Padding="6,3" IsVisible="{Binding Principal.IdiomaEsEs}">
+                      <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                    </Border>
+                  </StackPanel>
+                </Button>
+                <Button Classes="pildora" Click="OnIdiomaEn" Padding="26,16">
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="English" FontSize="16" />
+                    <Border Classes="chip" Padding="6,3" IsVisible="{Binding Principal.IdiomaEsEn}">
+                      <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                    </Border>
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding EsPasoTema}" Spacing="18" HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+              <TextBlock Classes="titular" Text="{loc:T onb.tema_titulo}" TextAlignment="Center"
+                         HorizontalAlignment="Center" FontSize="32" />
+              <TextBlock Classes="subtitular" Text="{loc:T onb.tema_desc}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="560" />
+              <ItemsControl ItemsSource="{Binding Principal.Temas}" HorizontalAlignment="Center">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Button Width="148" Margin="0,0,10,10" Padding="7" Background="{DynamicResource Marco}"
+                            BorderBrush="{Binding ColorBorde}" BorderThickness="1.5" CornerRadius="15"
+                            Click="OnSeleccionarTema" AutomationProperties.Name="{loc:T xaml.elegir_tema}">
+                      <StackPanel Spacing="9">
+                        <Border Height="78" Background="{Binding BrochaFondo}" CornerRadius="10" Padding="8">
+                          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7">
+                            <Border Background="{Binding BrochaSuperficie}" CornerRadius="6" Width="38" />
+                            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                              <Border Background="{Binding BrochaSuperficie}" Height="10" CornerRadius="5" />
+                              <StackPanel Orientation="Horizontal" Spacing="4">
+                                <Ellipse Width="8" Height="8" Fill="{Binding BrochaAcento}" />
+                                <Border Background="{Binding BrochaSuperficie}" Width="48" Height="7" CornerRadius="4" />
+                              </StackPanel>
+                            </StackPanel>
+                          </Grid>
+                        </Border>
+                        <Grid ColumnDefinitions="*,Auto">
+                          <StackPanel Spacing="2">
+                            <TextBlock Text="{Binding Nombre}" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" />
+                            <TextBlock Text="{Binding Descripcion}" FontSize="10" Foreground="{DynamicResource TintaTenue}" />
+                          </StackPanel>
+                          <Border Grid.Column="1" Classes="chip" Padding="6,3" IsVisible="{Binding Seleccionado}">
+                            <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                          </Border>
+                        </Grid>
+                      </StackPanel>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding EsPasoBienvenida}" Spacing="20" HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+              <TextBlock Classes="titular" Text="{loc:T onb.bienvenida_titulo}" TextAlignment="Center"
+                         HorizontalAlignment="Center" FontSize="32" />
+              <TextBlock Classes="subtitular" Text="{loc:T onb.bienvenida_desc}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="600" />
+              <Grid ColumnDefinitions="*,*,*" ColumnSpacing="14" MaxWidth="720">
+                <Border Classes="tarjeta" Grid.Column="0" MinHeight="170">
+                  <StackPanel Spacing="9">
+                    <Border Classes="baldosa" Background="#E8E8EA">
+                      <svg:Svg Path="/Assets/Icons/usb.svg" Width="21" Height="21" />
+                    </Border>
+                    <TextBlock Classes="tituloTarjeta" Text="{loc:T onb.paso1_titulo}" />
+                    <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.paso1_desc}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+                <Border Classes="tarjeta" Grid.Column="1" MinHeight="170">
+                  <StackPanel Spacing="9">
+                    <Border Classes="baldosa" Background="#E3E5FA">
+                      <svg:Svg Path="/Assets/Icons/camera.svg" Width="21" Height="21" />
+                    </Border>
+                    <TextBlock Classes="tituloTarjeta" Text="{loc:T onb.paso2_titulo}" />
+                    <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.paso2_desc}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+                <Border Classes="tarjeta" Grid.Column="2" MinHeight="170">
+                  <StackPanel Spacing="9">
+                    <Border Classes="baldosa" Background="#DDF3E8">
+                      <svg:Svg Path="/Assets/Icons/output.svg" Width="21" Height="21" />
+                    </Border>
+                    <TextBlock Classes="tituloTarjeta" Text="{loc:T onb.paso3_titulo}" />
+                    <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.paso3_desc}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+              <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.nada_instalado}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="600" />
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding EsPasoConexion}" Spacing="16" HorizontalAlignment="Center"
+                        VerticalAlignment="Center" MaxWidth="640">
+              <TextBlock Classes="titular" Text="{loc:T onb.conexion_titulo}" TextAlignment="Center"
+                         HorizontalAlignment="Center" FontSize="32" />
+              <TextBlock Classes="subtitular" Text="{loc:T onb.conexion_desc}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" />
+              <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                <Button Classes="pildora" Click="OnUsb" Padding="22,12">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <svg:Svg Path="/Assets/Icons/usb.svg" Width="16" Height="16" />
+                    <TextBlock Text="USB" />
+                    <Border Classes="chip" Padding="6,3" IsVisible="{Binding ModoUsb}">
+                      <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                    </Border>
+                  </StackPanel>
+                </Button>
+                <Button Classes="pildora" Click="OnWifi" Padding="22,12">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <svg:Svg Path="/Assets/Icons/wifi.svg" Width="16" Height="16" />
+                    <TextBlock Text="Wi-Fi" />
+                    <Border Classes="chip" Padding="6,3" IsVisible="{Binding ModoWifi}">
+                      <TextBlock Text="{loc:T xaml.activo}" FontSize="9" Foreground="{DynamicResource Indigo}" />
+                    </Border>
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+              <Border Classes="tarjeta">
+                <StackPanel Spacing="8">
+                  <StackPanel Spacing="6" IsVisible="{Binding ModoUsb}">
+                    <TextBlock Classes="tituloTarjeta" Text="{loc:T onb.usb_titulo}" />
+                    <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.usb_pasos}" TextWrapping="Wrap" />
+                    <TextBlock Classes="descripcionTarjeta" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}"
+                               Text="{Binding Principal.TransporteTexto}" IsVisible="{Binding Principal.HayTransporte}" />
+                  </StackPanel>
+                  <StackPanel Spacing="6" IsVisible="{Binding ModoWifi}">
+                    <TextBlock Classes="tituloTarjeta" Text="{loc:T onb.wifi_titulo}" />
+                    <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.wifi_pasos}" TextWrapping="Wrap" />
+                    <TextBlock Classes="descripcionTarjeta" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}"
+                               Text="{Binding Principal.WifiEstado}" TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding Principal.WifiDispositivos}"
+                                  IsVisible="{Binding Principal.HayDispositivosWifi}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Border Classes="tarjeta" Padding="12" Margin="0,0,0,8" Background="{DynamicResource TarjetaHover}">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                              <StackPanel Spacing="3" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Titulo}" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Tinta}" />
+                                <TextBlock Text="{Binding Resumen}" Classes="descripcionTarjeta" />
+                              </StackPanel>
+                              <Button Grid.Column="1" Classes="pildora" Click="OnEmparejarDispositivoWifi"
+                                      IsVisible="{Binding TieneEmparejamiento}">
+                                <TextBlock Text="{loc:T xaml.emparejar}" />
+                              </Button>
+                              <Button Grid.Column="2" Classes="pildoraPrincipal" Click="OnConectarDispositivoWifi"
+                                      IsEnabled="{Binding TieneConexion}">
+                                <TextBlock Text="{loc:T xaml.conectar}" />
+                              </Button>
+                            </Grid>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Spacing="4" MaxWidth="260" HorizontalAlignment="Left"
+                                IsVisible="{Binding Principal.HayDispositivosWifi}">
+                      <TextBlock Classes="etiqueta" Text="{loc:T xaml.codigo}" />
+                      <TextBox Text="{Binding Principal.WifiCodigo}" Watermark="{loc:T xaml.seis_digitos}" MaxLength="6" />
+                    </StackPanel>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+              <Border Classes="chip" HorizontalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                  <Ellipse Width="6" Height="6" Fill="#1E9E63" VerticalAlignment="Center" />
+                  <TextBlock Classes="chipTexto" Text="{Binding Principal.EstadoTexto}" />
+                </StackPanel>
+              </Border>
+              <TextBlock Classes="descripcionTarjeta" Text="{Binding Principal.EstadoAccion}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" />
+              <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.sin_telefono}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" />
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding EsPasoChequeo}" Spacing="16" HorizontalAlignment="Center"
+                        VerticalAlignment="Center" MaxWidth="660">
+              <TextBlock Classes="titular" Text="{loc:T onb.chequeo_titulo}" TextAlignment="Center"
+                         HorizontalAlignment="Center" FontSize="32" />
+              <TextBlock Classes="subtitular" Text="{loc:T onb.chequeo_desc}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" />
+              <ItemsControl ItemsSource="{Binding Chequeos}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Classes="tarjeta" Padding="14" Margin="0,0,0,8">
+                      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                        <Grid VerticalAlignment="Top">
+                          <TextBlock Text="✓" FontSize="18" FontWeight="Bold" Foreground="#1E9E63"
+                                     IsVisible="{Binding Ok}" />
+                          <TextBlock Text="!" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource RosaTexto}"
+                                     IsVisible="{Binding !Ok}" />
+                        </Grid>
+                        <StackPanel Grid.Column="1" Spacing="3">
+                          <TextBlock Text="{Binding Titulo}" FontWeight="SemiBold" Foreground="{DynamicResource Tinta}" />
+                          <TextBlock Text="{Binding Detalle}" Classes="descripcionTarjeta" TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Classes="descripcionTarjeta" Text="{loc:T onb.chequeo_nota}" TextAlignment="Center"
+                         TextWrapping="Wrap" HorizontalAlignment="Center" />
+            </StackPanel>
+
+          </Grid>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+          <Button Grid.Column="0" Classes="contorno" Click="OnSaltar" Padding="16,10">
+            <TextBlock Text="{loc:T onb.saltar}" />
+          </Button>
+          <Button Grid.Column="2" Classes="contorno" Click="OnAnterior" Padding="18,10"
+                  IsVisible="{Binding PuedeRetroceder}">
+            <TextBlock Text="{loc:T onb.atras}" />
+          </Button>
+          <Button Grid.Column="3" Classes="pildoraPrincipal" Click="OnSiguiente">
+            <TextBlock Text="{Binding TextoContinuar}" />
+          </Button>
+        </Grid>
+
+      </Grid>
+      </Panel>
+    </Border>
+  </Border>
+</Window>

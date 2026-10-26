@@ -36,7 +36,11 @@ import java.lang.reflect.Modifier;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -69,22 +73,28 @@ public final class LenscordDevice {
     private static final byte[] START = new byte[]{0, 0, 0, 1};
 
     private static volatile boolean gRunning = true;
+    private static final long ESPERA_CONEXION_MS = 90_000;
+    private static final int LINEA_MAXIMA = 8192;
+    private static int gFallosControl = 0;
     private static boolean VERBOSO_METODOS = false;
     private static final Object gLock = new Object();
 
     private static CameraManager gCamMgr;
     private static Context gCtx;
 
-    private static CameraDevice gDevice;
-    private static CameraCaptureSession gSession;
-    private static Surface gEncSurface;
-    private static MediaCodec gCodec;
-    private static StreamEncoder gEnc;
+    private static volatile CameraDevice gDevice;
+    private static volatile CameraCaptureSession gSession;
+    private static volatile Surface gEncSurface;
+    private static volatile MediaCodec gCodec;
+    private static volatile StreamEncoder gEnc;
     private static HandlerThread gCamThread;
     private static Handler gCamHandler;
 
-    private static String gCamId;
+    private static volatile String gCamId;
     private static float gZoomFrac = 0.0f;     // 0 = 1x; 1 = maximo
+    private static volatile float gZoomRatio = 1.0f;
+    private static volatile float gRatioMin = 1.0f;
+    private static volatile float gRatioMax = 1.0f;
     private static boolean gTorch = false;
     private static boolean gPaused = false;
 
@@ -118,7 +128,11 @@ public static void main(String[] args) {
                 extra = 5;
             }
             if (args.length > extra) gBindAddress = args[extra++];
-            if (args.length > extra) gAccessToken = args[extra];
+            if (!gBindAddress.matches("\\d{1,3}(\\.\\d{1,3}){3}"))
+                throw new IllegalArgumentException("direccion de escucha invalida");
+            String envToken = System.getenv("LENSCORD_TOKEN");
+            if (envToken != null) gAccessToken = envToken.trim();
+            else if (args.length > extra) gAccessToken = args[extra];
             log("perfil solicitado: " + gWidth + "x" + gHeight + "@" + gFps);
             run(vp, cp);
         } catch (Throwable t) {
@@ -265,10 +279,12 @@ Acquire.declararPaqueteShell(gCtx);
         log("escuchando video=" + videoSrv.getLocalPort() + " control=" + ctrlSrv.getLocalPort());
 
         Socket cs = aceptarAutenticado(ctrlSrv);
+        try { ctrlSrv.close(); } catch (Throwable ignored) { }
         openCtrl(cs);
         hello(cams);
 
         Socket vs = aceptarAutenticado(videoSrv);
+        try { videoSrv.close(); } catch (Throwable ignored) { }
         vs.setTcpNoDelay(true);
         OutputStream vout = new BufferedOutputStream(vs.getOutputStream(), 1 << 16);
         log("PC conectada desde " + vs.getRemoteSocketAddress());
@@ -298,23 +314,52 @@ Acquire.declararPaqueteShell(gCtx);
     }
 
     private static Socket aceptarAutenticado(ServerSocket servidor) throws IOException {
-        byte[] esperado = gAccessToken.getBytes(Charset.forName("US-ASCII"));
+        byte[] token = gAccessToken.getBytes(Charset.forName("US-ASCII"));
+        final long limite = System.currentTimeMillis() + ESPERA_CONEXION_MS;
         while (true) {
+            long resto = limite - System.currentTimeMillis();
+            if (resto <= 0) throw new java.net.SocketTimeoutException("la PC no se conecto a tiempo");
+            servidor.setSoTimeout((int) resto);
             Socket cliente = servidor.accept();
-            boolean valido = false;
             try {
-                cliente.setSoTimeout(5000);
-                byte[] recibido = new byte[esperado.length];
-                new DataInputStream(cliente.getInputStream()).readFully(recibido);
-                valido = MessageDigest.isEqual(esperado, recibido);
-                if (valido) {
+                cliente.setSoTimeout(1500);
+                if (desafiar(cliente, token)) {
                     cliente.setSoTimeout(0);
+                    cliente.setKeepAlive(true);
                     return cliente;
                 }
             } catch (IOException ignored) {
             }
             try { cliente.close(); } catch (IOException ignored) { }
         }
+    }
+
+    private static boolean desafiar(Socket cliente, byte[] token) throws IOException {
+        byte[] nonce = new byte[16];
+        new SecureRandom().nextBytes(nonce);
+        OutputStream o = cliente.getOutputStream();
+        o.write(nonce);
+        o.flush();
+        byte[] respuesta = new byte[32];
+        new DataInputStream(cliente.getInputStream()).readFully(respuesta);
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(token, "HmacSHA256"));
+            return MessageDigest.isEqual(mac.doFinal(nonce), respuesta);
+        } catch (GeneralSecurityException e) {
+            return false;
+        }
+    }
+
+    private static String leerLinea(BufferedReader in) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        int c;
+        while ((c = in.read()) != -1) {
+            if (c == '\n') return sb.toString();
+            if (sb.length() >= LINEA_MAXIMA) throw new IOException("linea de control demasiado larga");
+            sb.append((char) c);
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     private static boolean esEntero(String valor) {
@@ -342,8 +387,14 @@ Acquire.declararPaqueteShell(gCtx);
                     MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
             f2.setInteger(MediaFormat.KEY_BIT_RATE, gBitrateKbps * 1000);
             f2.setInteger(MediaFormat.KEY_FRAME_RATE, gFps);
-            gCodec.reset();
-            gCodec.configure(f2, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            try {
+                gCodec.reset();
+                gCodec.configure(f2, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            } catch (Throwable t2) {
+                try { gCodec.release(); } catch (Throwable ignored) { }
+                gCodec = null;
+                throw t2 instanceof Exception ? (Exception) t2 : new IllegalStateException(t2);
+            }
         }
         gEncSurface = gCodec.createInputSurface();
         gCodec.start();
@@ -424,7 +475,11 @@ Acquire.declararPaqueteShell(gCtx);
                     // INFO_TRY_AGAIN_LATER: no hay nada que hacer, el bucle ya espera
                 }
             } catch (Throwable t) {
-                log("bomba del encoder fallo: " + t);
+                if (alive) {
+                    log("bomba del encoder fallo: " + t);
+                    // Sin consumidor de video la sesion no tiene sentido.
+                    gRunning = false;
+                }
             }
         }
 
@@ -472,6 +527,10 @@ Acquire.declararPaqueteShell(gCtx);
 
         void release() {
             alive = false;
+            Thread p = pump;
+            if (p != null && p != Thread.currentThread()) {
+                try { p.join(1500); } catch (InterruptedException ignored) { }
+            }
             MediaCodec c = codec; codec = null;
             if (c != null) { try { c.stop(); } catch (Throwable ignored) { } try { c.release(); } catch (Throwable ignored) { } }
         }
@@ -492,29 +551,66 @@ Acquire.declararPaqueteShell(gCtx);
     }
 
 // ================================================================ camara
-    private static final CountDownLatch gAbierto = new CountDownLatch(1);
-    private static final boolean[] gAperturaOk = new boolean[]{false};
-    private static final CountDownLatch gConfigOk = new CountDownLatch(1);
-    private static final boolean[] gSesionOk = new boolean[]{false};
+    private static final class Intento {
+        final CountDownLatch abierto = new CountDownLatch(1);
+        final CountDownLatch configurado = new CountDownLatch(1);
+        final CountDownLatch cerrado = new CountDownLatch(1);
+        volatile boolean aperturaOk;
+        volatile boolean sesionOk;
+        volatile boolean obsoleto;
+    }
+
+    private static volatile Intento gIntento;
 
     /** Callbacks con nombre, no anonimos: d8 8.2.2 tira NPE con InnerClasses anonimos. */
     private static final class CamCb extends CameraDevice.StateCallback {
-        @Override public void onOpened(CameraDevice d) { gDevice = d; gAperturaOk[0] = true; gAbierto.countDown(); }
-        @Override public void onDisconnected(CameraDevice d) { log("camara desconectada"); gAbierto.countDown(); }
+        private final Intento in;
+        CamCb(Intento in) { this.in = in; }
+
+        @Override public void onOpened(CameraDevice d) {
+            if (in.obsoleto) { try { d.close(); } catch (Throwable ignored) { } return; }
+            gDevice = d;
+            in.aperturaOk = true;
+            in.abierto.countDown();
+        }
+        @Override public void onDisconnected(CameraDevice d) {
+            log("camara desconectada");
+            falloDeCamara(d, "la camara se desconecto");
+        }
         @Override public void onError(CameraDevice d, int e) {
             log("ERROR de camara: " + camErr(e));
-            ctrl("{\"t\":\"error\",\"m\":" + q("camara: " + camErr(e)) + "}");
-            gAbierto.countDown();
+            falloDeCamara(d, "camara: " + camErr(e));
+        }
+        @Override public void onClosed(CameraDevice d) { in.cerrado.countDown(); }
+
+        private void falloDeCamara(CameraDevice d, String mensaje) {
+            if (in.obsoleto) return;
+            try { d.close(); } catch (Throwable ignored) { }
+            if (in.aperturaOk) {
+                ctrl("{\"t\":\"error\",\"m\":" + q(mensaje) + "}");
+                gRunning = false;
+            } else {
+                ctrl("{\"t\":\"error\",\"m\":" + q(mensaje) + "}");
+                in.abierto.countDown();
+            }
         }
     }
 
     private static final class SesionCb extends CameraCaptureSession.StateCallback {
-        @Override public void onConfigured(CameraCaptureSession s) { gSession = s; gSesionOk[0] = true; gConfigOk.countDown(); }
+        private final Intento in;
+        SesionCb(Intento in) { this.in = in; }
+
+        @Override public void onConfigured(CameraCaptureSession s) {
+            if (in.obsoleto) { try { s.close(); } catch (Throwable ignored) { } return; }
+            gSession = s;
+            in.sesionOk = true;
+            in.configurado.countDown();
+        }
         @Override public void onReady(CameraCaptureSession s) { log("sesion onReady"); }
         @Override public void onConfigureFailed(CameraCaptureSession s) {
             log("ERROR: la camara no acepto la superficie del codificador");
             ctrl("{\"t\":\"error\",\"m\":" + q("la camara no acepto la superficie del codificador") + "}");
-            gConfigOk.countDown();
+            in.configurado.countDown();
         }
     }
 
@@ -546,22 +642,27 @@ Acquire.declararPaqueteShell(gCtx);
     }
 
     private static void openCameraAndSession() throws Exception {
-        gAperturaOk[0] = false;
-        gSesionOk[0] = false;
-        gCamMgr.openCamera(gCamId, new CamCb(), gCamHandler);
+        final Intento in = new Intento();
+        gIntento = in;
+        try {
+            gCamMgr.openCamera(gCamId, new CamCb(in), gCamHandler);
 
-        if (!gAbierto.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("timeout abriendo camara " + gCamId);
-        if (!gAperturaOk[0]) throw new IllegalStateException("no se pudo abrir la camara " + gCamId
-                + " (revisar autorizaciones del sistema o app en uso)");
+            if (!in.abierto.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("timeout abriendo camara " + gCamId);
+            if (!in.aperturaOk) throw new IllegalStateException("no se pudo abrir la camara " + gCamId
+                    + " (revisar autorizaciones del sistema o app en uso)");
 
-        CameraCharacteristics ch = gCamMgr.getCameraCharacteristics(gCamId);
-        Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
-        log("camara abierta " + gCamId + " facing=" + facingName(facing));
+            CameraCharacteristics ch = gCamMgr.getCameraCharacteristics(gCamId);
+            Integer facing = ch.get(CameraCharacteristics.LENS_FACING);
+            log("camara abierta " + gCamId + " facing=" + facingName(facing));
 
-        gDevice.createCaptureSession(Arrays.asList(gEncSurface), new SesionCb(), gCamHandler);
+            gDevice.createCaptureSession(Arrays.asList(gEncSurface), new SesionCb(in), gCamHandler);
 
-        if (!gConfigOk.await(8, TimeUnit.SECONDS) || !gSesionOk[0]) {
-            throw new IllegalStateException("no se pudo configurar la sesion de captura");
+            if (!in.configurado.await(8, TimeUnit.SECONDS) || !in.sesionOk) {
+                throw new IllegalStateException("no se pudo configurar la sesion de captura");
+            }
+        } catch (Exception e) {
+            closeCam();
+            throw e;
         }
         repeating();
         log("sesion lista");
@@ -580,6 +681,7 @@ Acquire.declararPaqueteShell(gCtx);
 
     private static void repeating() {
         if (gSession == null || gDevice == null) return;
+        if (gPaused) return;
         if (gEncSurface == null) {
             log("ERROR repeating: no hay superficie del encoder");
             return;
@@ -596,6 +698,8 @@ Acquire.declararPaqueteShell(gCtx);
                         ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
             }
             applyZoom(b, ch);
+            Range<Integer> ae = rangoAe(ch);
+            if (ae != null) b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, ae);
             long dur = frameDuration(ch);
             if (dur > 0) b.set(CaptureRequest.SENSOR_FRAME_DURATION, dur);
             int seq = gSession.setRepeatingRequest(b.build(), gCaptureCb, gCamHandler);
@@ -604,6 +708,19 @@ Acquire.declararPaqueteShell(gCtx);
             log("ERROR repeating: " + t);
             ctrl("{\"t\":\"error\",\"m\":" + q("no se pudo aplicar la peticion de captura: " + t) + "}");
         }
+    }
+
+    private static Range<Integer> rangoAe(CameraCharacteristics ch) {
+        try {
+            Range<Integer>[] ranges = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+            if (ranges == null) return null;
+            Range<Integer> best = null;
+            for (Range<Integer> r : ranges) {
+                if (r.getUpper() == null || r.getLower() == null || r.getUpper() != gFps) continue;
+                if (best == null || r.getLower() > best.getLower()) best = r;
+            }
+            return best;
+        } catch (Throwable t) { return null; }
     }
 
     private static long frameDuration(CameraCharacteristics ch) {
@@ -639,10 +756,12 @@ Acquire.declararPaqueteShell(gCtx);
                 if (target > max) target = max;
                 if (target < min) target = min;
                 b.set(CaptureRequest.CONTROL_ZOOM_RATIO, target);
+                gZoomRatio = target; gRatioMin = min; gRatioMax = max;
                 return;
             }
             if (active != null && maxD != null && maxD > 1f) {
-                float scale = 1.0f + Math.max(0.0f, maxD - 1.0f) * gZoomFrac;
+                float scale = 1.0f + Math.max(0.0f, maxD - 1.0f) * Math.max(0.0f, gZoomFrac);
+                gZoomRatio = scale; gRatioMin = 1.0f; gRatioMax = maxD;
                 int w = (int) Math.round(active.width() / scale);
                 int h = (int) Math.round(active.height() / scale);
                 w = Math.max(1, Math.min(active.width(), w));
@@ -684,13 +803,14 @@ private static void openCtrl(Socket s) throws Exception {
     private static void readLoop() {
         try {
             String line;
-            while (gRunning && (line = gCtrlIn.readLine()) != null) {
+            while (gRunning && (line = leerLinea(gCtrlIn)) != null) {
                 line = line.trim();
                 if (line.length() == 0) continue;
                 onCtrl(line);
             }
         } catch (Throwable e) {
             log("canal de control terminado: " + e);
+        } finally {
             gRunning = false;
         }
     }
@@ -705,7 +825,7 @@ private static void openCtrl(Socket s) throws Exception {
                 if (cmd.equals("cameras")) {
                     hello(enumerate(gCamMgr));
                 } else if (cmd.equals("zoom")) {
-                    gZoomFrac = (float) Math.max(-1.0, Math.min(1.0, jnum(line, "value", 0.0)));
+                    gZoomFrac = (float) Math.max(-1.0, Math.min(1.0, jnum(line, "value", gZoomFrac)));
                     repeating();
                     state();
                 } else if (cmd.equals("torch")) {
@@ -717,8 +837,13 @@ private static void openCtrl(Socket s) throws Exception {
                     }
                 } else if (cmd.equals("camera")) {
                     String id = jstr(line, "id");
-                    if (id != null && !id.equals(gCamId)) switchCamera(id);
-                    else state();
+                    if (id != null && !id.equals(gCamId)) {
+                        if (byIdOrNull(enumerate(gCamMgr), id) == null) {
+                            ctrl("{\"t\":\"nack\",\"cmd\":\"camera\",\"m\":" + q("camara inexistente") + "}");
+                        } else {
+                            switchCamera(id);
+                        }
+                    } else state();
                 } else if (cmd.equals("format")) {
                     int w = (int) jnum(line, "w", gWidth);
                     int h = (int) jnum(line, "h", gHeight);
@@ -742,46 +867,86 @@ private static void openCtrl(Socket s) throws Exception {
         }
     }
 
-    private static void switchCamera(String id) throws Exception {
-        ctrl("{\"t\":\"busy\",\"m\":" + q("Reiniciando camara...") + "}");
-        closeCam();
-        gCamId = id;
-        gZoomFrac = 0.0f;
-        gTorch = false;
-        gPaused = false;
-        openCameraAndSession();
-        state();
+    private static void switchCamera(String id) {
+        reiniciarConRollback(id, gWidth, gHeight, gFps, true);
     }
 
-    private static void reconfigure(int w, int h, int fp) throws Exception {
-        ctrl("{\"t\":\"busy\",\"m\":" + q("Reiniciando camara...") + "}");
-        closeCam();
-        gEnc.release();
-        if (gEncSurface != null) { try { gEncSurface.release(); } catch (Throwable ignored) { } gEncSurface = null; }
-        gCodec = null;
+    private static void reconfigure(int w, int h, int fp) {
+        reiniciarConRollback(gCamId, w, h, fp, false);
+    }
 
-        CameraCharacteristics ch = gCamMgr.getCameraCharacteristics(gCamId);
-        List<CamInfo> tmp = new ArrayList<CamInfo>();
-        CamInfo fake = byId(enumerate(gCamMgr), gCamId);
-        long[] wh = nearestSize(fake, w, h);
+    private static void reiniciarConRollback(String id, int w, int h, int fp, boolean otraCamara) {
+        if (!gRunning) return;
+        ctrl("{\"t\":\"busy\",\"m\":" + q("Reiniciando camara...") + "}");
+        String idA = gCamId;
+        int wA = gWidth, hA = gHeight, fA = gFps;
+        float zoomA = gZoomFrac;
+        boolean torchA = gTorch;
+        try {
+            if (otraCamara) { gZoomFrac = 0.0f; gTorch = false; }
+            reiniciar(id, w, h, fp);
+            state();
+        } catch (Throwable t) {
+            log("reinicio fallo (" + t + "); volviendo a la configuracion anterior");
+            ctrl("{\"t\":\"error\",\"m\":" + q("no se pudo cambiar: " + t) + "}");
+            gZoomFrac = zoomA;
+            gTorch = torchA;
+            try {
+                reiniciar(idA, wA, hA, fA);
+                state();
+            } catch (Throwable t2) {
+                log("no se pudo recuperar la configuracion anterior: " + t2);
+                ctrl("{\"t\":\"error\",\"m\":" + q("la camara no se pudo recuperar: " + t2) + "}");
+                gRunning = false;
+            }
+        }
+    }
+
+    private static void reiniciar(String id, int w, int h, int fp) throws Exception {
+        closeCam();
+        liberarEncoder();
+        gCamId = id;
+        CameraCharacteristics ch = gCamMgr.getCameraCharacteristics(id);
+        long[] wh = nearestSize(byId(enumerate(gCamMgr), id), w, h);
         gWidth = (int) wh[0]; gHeight = (int) wh[1];
         gFps = clampFps(ch, fp);
         gBitrateKbps = Math.max(900, (int) (gWidth * gHeight * 0.10 * gFps / 1000));
         startEncoder();
         openCameraAndSession();
-        state();
+    }
+
+    private static void liberarEncoder() {
+        StreamEncoder viejo = gEnc;
+        if (viejo != null) viejo.release();
+        Surface s = gEncSurface;
+        gEncSurface = null;
+        if (s != null) { try { s.release(); } catch (Throwable ignored) { } }
+        gCodec = null;
+        if (viejo != null) gEnc = new StreamEncoder(viejo.out);
     }
 
     private static void closeCam() {
-        try { if (gSession != null) { gSession.stopRepeating(); gSession.close(); } } catch (Throwable ignored) { }
-        try { if (gDevice != null) gDevice.close(); } catch (Throwable ignored) { }
+        Intento in = gIntento;
+        if (in != null) in.obsoleto = true;
+        CameraCaptureSession s = gSession;
+        CameraDevice d = gDevice;
         gSession = null; gDevice = null;
+        try { if (s != null) { s.stopRepeating(); s.close(); } } catch (Throwable ignored) { }
+        try {
+            if (d != null) {
+                d.close();
+                if (in != null) in.cerrado.await(2, TimeUnit.SECONDS);
+            }
+        } catch (Throwable ignored) { }
     }
 
     private static void state() {
         ctrl("{\"t\":\"state\",\"camera\":" + q(gCamId)
                 + ",\"torch\":" + gTorch
                 + ",\"zoom\":" + f(gZoomFrac)
+                + ",\"zoomRatio\":" + f(gZoomRatio)
+                + ",\"zoomRatioMin\":" + f(gRatioMin)
+                + ",\"zoomRatioMax\":" + f(gRatioMax)
                 + ",\"zoomKind\":" + q(zoomKind())
                 + ",\"paused\":" + gPaused
                 + ",\"flashAvailable\":" + hasFlash()
@@ -799,7 +964,7 @@ private static void openCtrl(Socket s) throws Exception {
           .append(",\"flashAvailable\":").append(hasFlash())
           .append(",\"zoom\":").append(f(gZoomFrac))
           .append(",\"zoomKind\":").append(q(zoomKind()))
-          .append(",\"paused\":false")
+          .append(",\"paused\":").append(gPaused)
           .append(",\"w\":").append(gWidth).append(",\"h\":").append(gHeight).append(",\"fps\":").append(gFps)
           .append(",\"cameras\":[");
         for (int i = 0; i < cams.size(); i++) { if (i > 0) sb.append(','); sb.append(cams.get(i).json()); }
@@ -813,7 +978,11 @@ private static void openCtrl(Socket s) throws Exception {
             gCtrlOut.write(s.getBytes(UTF8));
             gCtrlOut.write('\n');
             gCtrlOut.flush();
-        } catch (Throwable t) { log("envio de control fallo: " + t); }
+            gFallosControl = 0;
+        } catch (Throwable t) {
+            log("envio de control fallo: " + t);
+            if (++gFallosControl >= 3) gRunning = false;
+        }
     }
 
     // ================================================================ inventario
@@ -926,6 +1095,11 @@ private static void openCtrl(Socket s) throws Exception {
         return out;
     }
 
+    private static CamInfo byIdOrNull(List<CamInfo> l, String id) {
+        for (CamInfo c : l) if (c.id.equals(id)) return c;
+        return null;
+    }
+
     private static CamInfo byId(List<CamInfo> l, String id) {
         for (CamInfo c : l) if (c.id.equals(id)) return c;
         return new CamInfo();
@@ -982,15 +1156,18 @@ private static void openCtrl(Socket s) throws Exception {
 
     // ================================================================ apagado
     private static void stopAll() {
-        closeCam();
-        if (gEnc != null) gEnc.release();
-        if (gEncSurface != null) { try { gEncSurface.release(); } catch (Throwable ignored) { } }
-        try {
-            if (gCtrlOut != null) { gCtrlOut.write("{\"t\":\"bye\"}\n".getBytes(UTF8)); gCtrlOut.flush(); }
-        } catch (Throwable ignored) { }
-        if (gEnc != null) gEnc.closeStream();
-        if (gCamThread != null) gCamThread.quitSafely();
-        log("limpieza completada");
+        synchronized (gLock) {
+            closeCam();
+            if (gEnc != null) gEnc.release();
+            Surface s = gEncSurface;
+            if (s != null) { try { s.release(); } catch (Throwable ignored) { } }
+            try {
+                if (gCtrlOut != null) { gCtrlOut.write("{\"t\":\"bye\"}\n".getBytes(UTF8)); gCtrlOut.flush(); }
+            } catch (Throwable ignored) { }
+            if (gEnc != null) gEnc.closeStream();
+            if (gCamThread != null) gCamThread.quitSafely();
+            log("limpieza completada");
+        }
     }
 
     // ================================================================ utils

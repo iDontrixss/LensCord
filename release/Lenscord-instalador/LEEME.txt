@@ -1,0 +1,95 @@
+Lenscord — instalador temporal (versión para compartir)
+========================================================
+
+QUÉ ES
+------
+Lenscord convierte tu teléfono Android en una webcam para tu PC.
+Lo notable: NO se instala nada en el celular. La PC le envía un
+pequeño módulo (40 KB) mientras la sesión está activa y al
+detenerlo todo queda como antes, sin rastros.
+
+
+REQUISITOS
+----------
+- Windows 10 o 11 (x64). En Windows 11 también aparece como "cámara
+  del sistema"; en Windows 10 funciona igual dentro de Discord, OBS,
+  Meet, etc.
+- Permisos de administrador (el instalador lo pide con el aviso de UAC).
+- Un teléfono Android con opción "Depuración USB" habilitada,
+  y el cable conectado.
+- Internet solo si tu PC no tiene ffmpeg ya instalado: entonces el
+  instalador lo baja una vez (~90 MB, de gyan.dev).
+
+
+CÓMO INSTALAR
+-------------
+1. Doble clic en  Instalar-Lenscord.cmd
+2. Acepta el aviso de administrador.
+3. Si Windows SmartScreen muestra "Se protegió la PC": clic en
+   "Más información" y luego en "Ejecutar de todas formas"
+   (es un instalador sin firma digital, de un proyecto casero).
+4. Al terminar verás "LISTO" verde y cierras la ventana.
+
+
+CÓMO PROBARLO (por primera vez)
+-------------------------------
+1. En el teléfono: Ajustes > Opciones de desarrollador > activa
+   "Depuración USB". (Si no ves esa opción: Ajustes > Información
+   del teléfono > toca "Número de compilación" 7 veces.)
+2. Conecta el teléfono por USB a la PC.
+3. Abre Lenscord desde el Menú Inicio.
+4. En la app pulsá "Iniciar cámara". La primera vez el teléfono
+   pregunta si autorizás la depuración desde esta PC: tocá
+   "Permitir" (y marcá "Siempre desde esta PC").
+5. En Discord: Configuración > Video > Cámara: elegí "Lenscord".
+   Mirá la vista previa. ~30 fps a 720p.
+6. Cuando termines: botón "Detener" en Lenscord. Con eso el
+   teléfono queda igual que antes.
+
+WI-FI (OPCIONAL)
+----------------
+En Lenscord, arriba a la derecha, tocá "USB" para cambiar a Wi-Fi:
+"Activar por USB" saca la IP del teléfono y sigue la sesión sin
+cable. Al terminar usa "Volver a USB" (deja el teléfono protegido:
+mientras las sesiones están activas, el teléfono queda accesible
+desde tu red local).
+
+
+QUÉ SE INSTALA Y DÓNDE
+----------------------
+%LocalAppData%\Lenscord\          -> la app + adb portable + módulo dex
+%ProgramFiles%\Lenscord\VirtualCamera\  -> la webcam virtual de Windows
+%ProgramData%\Lenscord\           -> frames compartidos (se crea al usar)
+Menu Inicio -> acceso "Lenscord" (y en el escritorio, si elegiste el atajo)
+
+
+CÓMO DESINSTALAR
+-----------------
+Doble clic en  Desinstalar-Lenscord.cmd  (de esta carpeta).
+Borra la app, la webcam, los accesos y los registros. Lo único que
+queda después son datos de uso en %ProgramData%\Lenscord, que se
+pueden borrar a mano sin problema.
+
+
+PROBLEMAS FRECUENTES
+--------------------
+- "Falta el .dex" o "No se encontró ffmpeg": volvé a ejecutar el
+  instalador en una PC con internet (o con ffmpeg en el PATH).
+- Discord da error al abrir la cámara: asegurá que en Lenscord la
+  sesión esté TRANSMITIENDO y el teléfono desbloqueado detrás (con
+  la pantalla encendida; la app la deja encendida sola).
+- Para actualizar/ reinstalar: cerrá Discord, OBS y cualquier app
+  que use la cámara antes de correr el instalador de nuevo.
+- Si Discord o la app se crashearon y quedó la cámara en negro:
+  abrí de nuevo Lenscord. Si persiste, desinstalá y volvé a instalar.
+
+
+NOTA TÉCNICA
+------------
+- El módulo del teléfono se compila aparte (dispositivo/build-dex.ps1)
+  y viaja en el paquete como dispositivo\out\lenscord.dex.
+- Webcam: registro COM + DirectShow (la que ven Discord y
+  libwebrtc) + en Win11 una "cámara virtual" de Media Foundation
+  con MFCreateVirtualCamera persistente.
+- Es GPL-3: el código vive en el repo de Lenscord; este instalador
+  es momentáneo hasta que exista el instalador oficial firmado.

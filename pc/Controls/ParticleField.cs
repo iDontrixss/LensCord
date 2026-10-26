@@ -12,25 +12,27 @@ public sealed class ParticleField : Control
 
     private sealed class Punto
     {
+        public double Angulo;        // posicion angular actual en el cinturon
+        public double RadioFactor;   // 0..1: distancia al centro dentro del ovalo
+        public double GeometriaX;    // jitter fijo por particula (aspecto organico)
+        public double GeometriaY;
+        public double Omega;         // velocidad angular (rad/s); los internos giran mas rapido
         public Point Hogar;
         public Point Posicion;
         public Vector Velocidad;
         public double Radio;
-        public IBrush Pincel = Brushes.Transparent;
+        public int Tono; // indice dentro de la paleta del tema (0 tenue .. 2 fuerte)
     }
 
     private readonly List<Punto> _puntos = new();
+    private Point _centro;
+    private Vector _semieje;
+    private IBrush[]? _pinceles;
+    private Color _tintaTema;
     private readonly DispatcherTimer _reloj;
-    private readonly IBrush[] _pinceles =
-    {
-        new SolidColorBrush(Color.FromArgb(118, 26, 26, 31)),
-        new SolidColorBrush(Color.FromArgb(110, 106, 90, 224)),
-        new SolidColorBrush(Color.FromArgb(100, 240, 72, 155)),
-    };
 
     private Point? _puntero;
     private Size _tamano;
-    private bool _activo;
 
     public ParticleField()
     {
@@ -43,14 +45,12 @@ public sealed class ParticleField : Control
     public void MoverPuntero(Point posicion)
     {
         _puntero = posicion;
-        _activo = true;
         if (!_reloj.IsEnabled) _reloj.Start();
     }
 
     public void OcultarPuntero()
     {
         _puntero = null;
-        _activo = false;
         if (!_reloj.IsEnabled) _reloj.Start();
     }
 
@@ -62,14 +62,53 @@ public sealed class ParticleField : Control
             _tamano = finalSize;
             Generar(finalSize);
         }
+        if (_puntos.Count > 0 && !_reloj.IsEnabled) _reloj.Start();
         return base.ArrangeOverride(finalSize);
     }
 
     public override void Render(DrawingContext context)
     {
+        var pinceles = Pinceles();
         foreach (var p in _puntos)
-            context.DrawEllipse(p.Pincel, null, p.Posicion, p.Radio, p.Radio);
+            context.DrawEllipse(pinceles[p.Tono], null, p.Posicion, p.Radio, p.Radio);
     }
+
+    // Paleta de puntos segun el tema: usa la tinta del tema (casi negra en los
+    // claros -> puntitos negros que resaltan; casi blanca en los oscuros ->
+    // puntitos blancos brillantes). Tres niveles de opacidad para dar profundidad.
+    private IBrush[] Pinceles()
+    {
+        var tinta = TintaTema();
+        if (_pinceles is null || _tintaTema != tinta)
+        {
+            _tintaTema = tinta;
+            // tinta clara => tema oscuro (fondo negro): el punto blanco pide algo mas de alfa
+            // para destacar igual que el punto negro sobre fondo claro.
+            bool oscuro = Luminancia(tinta) > 0.5;
+            byte a1 = oscuro ? (byte)150 : (byte)230;
+            byte a2 = oscuro ? (byte)185 : (byte)245;
+            byte a3 = oscuro ? (byte)220 : (byte)255;
+            _pinceles = new IBrush[]
+            {
+                new SolidColorBrush(Color.FromArgb(a1, tinta.R, tinta.G, tinta.B)),
+                new SolidColorBrush(Color.FromArgb(a2, tinta.R, tinta.G, tinta.B)),
+                new SolidColorBrush(Color.FromArgb(a3, tinta.R, tinta.G, tinta.B)),
+            };
+        }
+        return _pinceles;
+    }
+
+    private static Color TintaTema()
+    {
+        if (Application.Current is { } app &&
+            app.TryGetResource("Tinta", app.RequestedThemeVariant, out object? valor) &&
+            valor is ISolidColorBrush brocha)
+            return brocha.Color;
+        return Color.FromArgb(255, 26, 26, 31);
+    }
+
+    private static double Luminancia(Color c) =>
+        (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255.0;
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
@@ -83,35 +122,39 @@ public sealed class ParticleField : Control
         if (tamano.Width < 2 || tamano.Height < 2) return;
 
         var rng = new Random(7);
-        double cx = tamano.Width * 0.5;
-        double cy = tamano.Height * 0.48;
-        double rx = Math.Max(80, tamano.Width * 0.47);
-        double ry = Math.Max(60, tamano.Height * 0.43);
+        _centro = new Point(tamano.Width * 0.5, tamano.Height * 0.48);
+        _semieje = new Vector(Math.Max(80, tamano.Width * 0.47), Math.Max(60, tamano.Height * 0.43));
         int cantidad = Math.Clamp((int)(tamano.Width * tamano.Height / 2800), 150, 280);
 
         for (int i = 0; i < cantidad; i++)
         {
             double angulo = rng.NextDouble() * Math.PI * 2;
-            double radio = 0.56 + 0.44 * Math.Sqrt(rng.NextDouble());
-            double x = cx + Math.Cos(angulo) * rx * radio + (rng.NextDouble() - 0.5) * 24;
-            double y = cy + Math.Sin(angulo) * ry * radio + (rng.NextDouble() - 0.5) * 24;
-            x = Math.Clamp(x, 8, tamano.Width - 8);
-            y = Math.Clamp(y, 8, tamano.Height - 8);
+            double radioFactor = 0.56 + 0.44 * Math.Sqrt(rng.NextDouble());
+            // giro en el mismo sentido; los asteroides internos van mas rapido (Kepler suavizado)
+            double omega = 0.028 * (0.78 / radioFactor) * (0.85 + 0.3 * rng.NextDouble());
+            double geometriaX = (rng.NextDouble() - 0.5) * 24;
+            double geometriaY = (rng.NextDouble() - 0.5) * 24;
+            double x = Math.Clamp(_centro.X + Math.Cos(angulo) * _semieje.X * radioFactor + geometriaX, 8, tamano.Width - 8);
+            double y = Math.Clamp(_centro.Y + Math.Sin(angulo) * _semieje.Y * radioFactor + geometriaY, 8, tamano.Height - 8);
 
             _puntos.Add(new Punto
             {
+                Angulo = angulo,
+                RadioFactor = radioFactor,
+                GeometriaX = geometriaX,
+                GeometriaY = geometriaY,
+                Omega = omega,
                 Hogar = new Point(x, y),
                 Posicion = new Point(x, y),
                 Velocidad = default,
                 Radio = rng.NextDouble() < 0.82 ? 1.35 : 2.15,
-                Pincel = _pinceles[rng.Next(_pinceles.Length)],
+                Tono = rng.NextDouble() < 0.5 ? 1 : (rng.NextDouble() < 0.5 ? 0 : 2),
             });
         }
     }
 
     private void Avanzar(double dt)
     {
-        bool movimiento = false;
         foreach (var p in _puntos)
         {
             if (_puntero is { } mouse)
@@ -122,9 +165,14 @@ public sealed class ParticleField : Control
                 {
                     double fuerza = 1 - distancia / RadioInfluencia;
                     p.Velocidad += haciaMouse / distancia * (980 * fuerza * dt);
-                    movimiento = true;
                 }
             }
+
+            // el cinturon gira despacio: el hogar de cada punto avanza en su orbita
+            p.Angulo += p.Omega * dt;
+            p.Hogar = new Point(
+                _centro.X + Math.Cos(p.Angulo) * _semieje.X * p.RadioFactor + p.GeometriaX,
+                _centro.Y + Math.Sin(p.Angulo) * _semieje.Y * p.RadioFactor + p.GeometriaY);
 
             Vector haciaHogar = p.Hogar - p.Posicion;
             p.Velocidad += haciaHogar * (26 * dt);
@@ -134,12 +182,8 @@ public sealed class ParticleField : Control
             Vector desvio = p.Posicion - p.Hogar;
             if (desvio.Length > DesplazamientoMaximo)
                 p.Posicion = p.Hogar + desvio.Normalize() * DesplazamientoMaximo;
-
-            if (p.Velocidad.Length > 0.08 || desvio.Length > 0.15)
-                movimiento = true;
         }
 
         InvalidateVisual();
-        if (!movimiento && !_activo) _reloj.Stop();
     }
 }

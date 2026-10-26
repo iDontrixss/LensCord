@@ -4,7 +4,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$targetDirectory = Join-Path $env:ProgramFiles "Lenscord\VirtualCamera"
+$sourceUnregistered = $false
+$programFilesRoot = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+$targetDirectory = Join-Path $programFilesRoot "Lenscord\VirtualCamera"
 $dataDirectory = Join-Path $env:ProgramData "Lenscord"
 $sourceDllName = "Lenscord.VirtualCamera.Source.dll"
 $dshowDllName = "Lenscord.VirtualCamera.DShow.dll"
@@ -21,7 +23,35 @@ if ([Environment]::OSVersion.Version.Build -lt 22000) {
     throw "The Lenscord virtual camera requires Windows 11 build 22000 or newer."
 }
 
+function Set-DataDirectoryAcl {
+    $writers = @($identity.User.Value)
+    try {
+        $explorer = Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Select-Object -First 1
+        if ($explorer) {
+            $ownerSid = (Invoke-CimMethod -InputObject $explorer -MethodName GetOwnerSid).Sid
+            if ($ownerSid -and ($writers -notcontains $ownerSid)) { $writers += $ownerSid }
+        }
+    }
+    catch { }
+    $grants = @('/inheritance:e')
+    foreach ($sid in $writers) { $grants += @('/grant', ('*' + $sid + ':(OI)(CI)M')) }
+    $grants += @('/grant', '*S-1-5-32-545:(OI)(CI)RX', '/grant', '*S-1-5-19:(OI)(CI)R', '/grant', '*S-1-5-18:(OI)(CI)R')
+    & icacls.exe $dataDirectory @grants | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set permissions on the shared-frame directory (icacls exit $LASTEXITCODE)." }
+}
+function Invoke-Regsvr32([string]$Dll, [switch]$Unregister) {
+    $arguments = if ($Unregister) { @('/s', '/u', "`"$Dll`"") } else { @('/s', "`"$Dll`"") }
+    $process = Start-Process -FilePath 'regsvr32.exe' -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
+    return $process.ExitCode
+}
+
 New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+Set-DataDirectoryAcl
+if (Test-Path -LiteralPath $logPath) {
+    if ((Get-Item -LiteralPath $logPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        Remove-Item -LiteralPath $logPath -Force
+    }
+}
 Set-Content -LiteralPath $logPath -Value "[$(Get-Date -Format o)] Starting Lenscord virtual camera installation."
 function Write-InstallLog([string]$Message) {
     Add-Content -LiteralPath $logPath -Value "[$(Get-Date -Format o)] $Message"
@@ -120,8 +150,9 @@ try {
     $oldSource = Join-Path $targetDirectory $sourceDllName
     Write-InstallLog "Keeping the persistent virtual-camera registration while replacing its COM source."
     if (Test-Path -LiteralPath $oldSource) {
-        & regsvr32.exe /s /u $oldSource
-        Write-InstallLog "Old COM source unregister returned exit code $LASTEXITCODE."
+        $unregisterCode = Invoke-Regsvr32 $oldSource -Unregister
+        $sourceUnregistered = $true
+        Write-InstallLog "Old COM source unregister returned exit code $unregisterCode."
     }
 
     New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
@@ -130,23 +161,19 @@ try {
         Copy-PayloadFile $payloadFile.FullName (Join-Path $targetDirectory $payloadFile.Name)
     }
 
-    & icacls.exe $dataDirectory /inheritance:e /grant '*S-1-5-32-545:(OI)(CI)M' '*S-1-5-19:(OI)(CI)R' '*S-1-5-18:(OI)(CI)R' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Failed to set permissions on the shared-frame directory (icacls exit $LASTEXITCODE)." }
-    Write-InstallLog "Shared-frame permissions updated."
-
-    & regsvr32.exe /s $installedSource
-    if ($LASTEXITCODE -ne 0) { throw "Failed to register the virtual camera COM source (regsvr32 exit $LASTEXITCODE)." }
+    $registerCode = Invoke-Regsvr32 $installedSource
+    if ($registerCode -ne 0) { throw "Failed to register the virtual camera COM source (regsvr32 exit $registerCode)." }
+    $sourceUnregistered = $false
     Write-InstallLog "COM source registered."
 
-    # Filtro DirectShow: es el que Discover y libwebrtc (Discord, etc.) ven.
-    & regsvr32.exe /s $installedDShow
-    if ($LASTEXITCODE -ne 0) { throw "Failed to register the DirectShow virtual camera (regsvr32 exit $LASTEXITCODE)." }
+    $registerCode = Invoke-Regsvr32 $installedDShow
+    if ($registerCode -ne 0) { throw "Failed to register the DirectShow virtual camera (regsvr32 exit $registerCode)." }
     Write-InstallLog "DirectShow virtual camera registered."
 
     $createExitCode = Invoke-CameraControl (Join-Path $targetDirectory $controlExeName) "create"
     if ($createExitCode -ne 0) {
-        & regsvr32.exe /s /u $installedSource
-        & regsvr32.exe /s /u $installedDShow
+        $null = Invoke-Regsvr32 $installedSource -Unregister
+        $null = Invoke-Regsvr32 $installedDShow -Unregister
         throw "Failed to create the Windows virtual camera (control exit $createExitCode)."
     }
 
@@ -155,6 +182,10 @@ try {
 }
 catch {
     Write-InstallLog "ERROR: $($_.Exception.Message)"
+    if ($sourceUnregistered -and (Test-Path -LiteralPath $installedSource)) {
+        $null = Invoke-Regsvr32 $installedSource
+        Write-InstallLog "Previous COM source registration restored."
+    }
     throw
 }
 finally {

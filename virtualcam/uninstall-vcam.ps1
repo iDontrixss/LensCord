@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
-$targetDirectory = Join-Path $env:ProgramFiles "Lenscord\VirtualCamera"
+$programFilesRoot = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+$targetDirectory = Join-Path $programFilesRoot "Lenscord\VirtualCamera"
 $sourceDll = Join-Path $targetDirectory "Lenscord.VirtualCamera.Source.dll"
 $dshowDll = Join-Path $targetDirectory "Lenscord.VirtualCamera.DShow.dll"
 $controlExe = Join-Path $targetDirectory "Lenscord.VirtualCamera.Control.exe"
@@ -13,9 +14,18 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+if (Test-Path -LiteralPath $logPath) {
+    if ((Get-Item -LiteralPath $logPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        Remove-Item -LiteralPath $logPath -Force
+    }
+}
 Add-Content -LiteralPath $logPath -Value "[$(Get-Date -Format o)] Starting Lenscord virtual camera removal."
 function Write-InstallLog([string]$Message) {
     Add-Content -LiteralPath $logPath -Value "[$(Get-Date -Format o)] $Message"
+}
+function Invoke-Regsvr32([string]$Dll) {
+    $process = Start-Process -FilePath 'regsvr32.exe' -ArgumentList @('/s', '/u', "`"$Dll`"") -Wait -PassThru -WindowStyle Hidden
+    return $process.ExitCode
 }
 function Invoke-CameraControl([string]$Executable, [string]$Command) {
     $previousPreference = $ErrorActionPreference
@@ -61,33 +71,46 @@ function Restart-CameraServices {
     }
 }
 
+$warnings = @()
 try {
     if (Test-Path -LiteralPath $controlExe) {
         $removeExitCode = Invoke-CameraControl $controlExe "remove"
         if ($removeExitCode -ne 0) {
-            throw "Failed to remove the Windows virtual camera (control exit $removeExitCode)."
+            $warnings += "Failed to remove the Windows virtual camera (control exit $removeExitCode)."
+            Write-InstallLog "WARNING: $($warnings[-1])"
         }
-        Write-InstallLog "Persistent virtual camera removed."
+        else {
+            Write-InstallLog "Persistent virtual camera removed."
+        }
     }
 
     Stop-CameraServices
 
     if (Test-Path -LiteralPath $sourceDll) {
-        & regsvr32.exe /s /u $sourceDll
+        $code = Invoke-Regsvr32 $sourceDll
+        Write-InstallLog "COM source unregister returned exit code $code."
+        if ($code -ne 0) { $warnings += "COM source unregister failed (exit $code)." }
     }
 
     if (Test-Path -LiteralPath $dshowDll) {
-        & regsvr32.exe /s /u $dshowDll
-        Write-InstallLog "DirectShow virtual camera unregistered."
+        $code = Invoke-Regsvr32 $dshowDll
+        Write-InstallLog "DirectShow virtual camera unregister returned exit code $code."
+        if ($code -ne 0) { $warnings += "DirectShow unregister failed (exit $code)." }
     }
 
     if (Test-Path -LiteralPath $targetDirectory) {
-        $resolvedProgramFiles = [System.IO.Path]::GetFullPath($env:ProgramFiles)
+        $resolvedProgramFiles = [System.IO.Path]::GetFullPath($programFilesRoot).TrimEnd('\') + '\'
         $resolvedTarget = [System.IO.Path]::GetFullPath($targetDirectory)
         if (-not $resolvedTarget.StartsWith($resolvedProgramFiles, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Refusing to remove a target outside Program Files."
         }
-        Remove-Item -LiteralPath $resolvedTarget -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $resolvedTarget -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            $warnings += "Some camera files are still in use and were left in place; close Discord or other video apps and run this again. ($($_.Exception.Message))"
+            Write-InstallLog "WARNING: $($warnings[-1])"
+        }
     }
 }
 catch {
@@ -103,4 +126,10 @@ finally {
     }
 }
 
-Write-Host "Lenscord Windows Virtual Camera removed."
+if ($warnings.Count -eq 0) {
+    Write-Host "Lenscord Windows Virtual Camera removed."
+}
+else {
+    Write-Host "Lenscord Windows Virtual Camera removed with warnings:" -ForegroundColor Yellow
+    $warnings | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+}
